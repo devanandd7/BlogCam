@@ -8,7 +8,10 @@ import com.facebook.react.uimanager.ViewManager
 class BlogCamPackage : ReactPackage {
   override fun createNativeModules(
     reactContext: ReactApplicationContext,
-  ): List<NativeModule> = listOf(BlogCamTorchModule(reactContext))
+  ): List<NativeModule> = listOf(
+    BlogCamTorchModule(reactContext),
+    BlogCamAudioModule(reactContext),
+  )
 
   override fun createViewManagers(
     reactContext: ReactApplicationContext,

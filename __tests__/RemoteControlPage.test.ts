@@ -64,4 +64,11 @@ test('serves valid browser JavaScript without a browser-side recorder', () => {
   expect(script).not.toContain('MediaRecorder');
   expect(script).toContain('await api("record-start")');
   expect(script).toContain('command("record-stop")');
+  expect(remoteControlPage).toContain('AUDIO NOISE SUPPRESSION');
+  expect(remoteControlPage).toContain('id="audioDsp"');
+  expect(remoteControlPage).toContain('id="audioRaw"');
+  expect(remoteControlPage).toContain('id="audioDeep"');
+  expect(remoteControlPage).toContain('id="audioHwBadge"');
+  expect(script).toContain('api("audio-mode"');
 });
+

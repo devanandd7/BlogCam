@@ -55,6 +55,7 @@ type ActionRequest = {
   image?: string;
   mode?: CaptureMode;
   seconds?: number;
+  audioMode?: string;
 };
 
 const LIVE_PREVIEW_PROFILE: PreviewProfile = {
@@ -127,27 +128,59 @@ function isUsableIpv4Address(address: string | null): address is string {
   );
 }
 
-async function findPhoneIpv4Address(): Promise<string | null> {
+type NetworkIp = { name: string; displayName?: string; address: string };
+
+async function findPhoneIpv4Addresses(): Promise<string[]> {
+  const addresses: string[] = [];
   try {
-    const address = await Promise.race([
-      NetworkInfo.getIPV4Address(),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), 3_000)),
-    ]);
-    if (isUsableIpv4Address(address)) {
-      return address;
+    if (NativeModules.BlogCamTorch?.getNetworkIpAddresses) {
+      const nativeIps: NetworkIp[] =
+        await NativeModules.BlogCamTorch.getNetworkIpAddresses();
+      if (Array.isArray(nativeIps)) {
+        for (const item of nativeIps) {
+          if (
+            item?.address &&
+            isUsableIpv4Address(item.address) &&
+            !addresses.includes(item.address)
+          ) {
+            addresses.push(item.address);
+          }
+        }
+      }
     }
   } catch {
-    // Try the interface-based lookup below when Wi-Fi lookup is unavailable.
+    // fallback
   }
-  try {
-    const address = await Promise.race([
-      NetworkInfo.getIPAddress(),
-      new Promise<null>(resolve => setTimeout(() => resolve(null), 3_000)),
-    ]);
-    return isUsableIpv4Address(address) ? address : null;
-  } catch {
-    return null;
+
+  if (addresses.length === 0) {
+    try {
+      const address = await Promise.race([
+        NetworkInfo.getIPV4Address(),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 3_000)),
+      ]);
+      if (isUsableIpv4Address(address) && !addresses.includes(address)) {
+        addresses.push(address);
+      }
+    } catch {
+      // fallback
+    }
   }
+
+  if (addresses.length === 0) {
+    try {
+      const address = await Promise.race([
+        NetworkInfo.getIPAddress(),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 3_000)),
+      ]);
+      if (isUsableIpv4Address(address) && !addresses.includes(address)) {
+        addresses.push(address);
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  return addresses;
 }
 
 export default function RemoteControlSession({ onStop }: Props) {
@@ -162,6 +195,7 @@ export default function RemoteControlSession({ onStop }: Props) {
   );
   const [servicePin, setServicePin] = useState('----');
   const [serverUrl, setServerUrl] = useState('');
+  const [allServerUrls, setAllServerUrls] = useState<string[]>([]);
   const [serverStarted, setServerStarted] = useState(false);
   const [isFindingAddress, setIsFindingAddress] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Starting camera…');
@@ -304,17 +338,20 @@ export default function RemoteControlSession({ onStop }: Props) {
 
   const refreshServerAddress = async () => {
     setIsFindingAddress(true);
-    const address = await findPhoneIpv4Address();
+    const addresses = await findPhoneIpv4Addresses();
     setIsFindingAddress(false);
-    if (!address) {
+    if (!addresses || addresses.length === 0) {
       setServerUrl('');
-      setConnectionStatus('Server running; phone Wi-Fi address unavailable');
+      setAllServerUrls([]);
+      setConnectionStatus('Server running; phone network address unavailable');
       setErrorMessage(
-        'The control server is running, but BlogCam could not read a Wi-Fi IPv4 address. Reconnect Wi-Fi or use USB debugging.',
+        'The control server is running, but BlogCam could not detect an active Wi-Fi or Hotspot IPv4 address. Connect Wi-Fi or turn on Hotspot, or use USB cable.',
       );
       return;
     }
-    setServerUrl(`http://${address}:${PORT}`);
+    const urls = addresses.map(addr => `http://${addr}:${PORT}`);
+    setServerUrl(urls[0]);
+    setAllServerUrls(urls);
     setErrorMessage('');
     setConnectionStatus('Waiting for a browser to pair');
   };
@@ -725,13 +762,48 @@ export default function RemoteControlSession({ onStop }: Props) {
           return;
         }
         case 'status': {
+          let currentAudioMode = 'dsp';
+          let audioCapabilities = null;
+          if (Platform.OS === 'android' && NativeModules.BlogCamAudioModule) {
+            try {
+              currentAudioMode = await NativeModules.BlogCamAudioModule.getAudioMode();
+              audioCapabilities = await NativeModules.BlogCamAudioModule.checkAudioCapabilities();
+            } catch {
+              // ignore
+            }
+          }
           response.json({
             recordingState: recordingStateRef.current,
             captureMode: captureModeRef.current,
             cameraAvailable: Boolean(streamRef.current),
             isBrowserConnected: isBrowserConnectedRef.current,
             flashEnabled: flashRef.current && cameraFacing === 'back' && Boolean(nativeCameraDevice?.hasTorch),
+            audioMode: currentAudioMode,
+            audioCapabilities,
           });
+          return;
+        }
+        case 'audio-mode': {
+          const targetAudioMode = data.audioMode;
+          if (targetAudioMode !== 'off' && targetAudioMode !== 'dsp' && targetAudioMode !== 'deep') {
+            respondError(response, 'Invalid audio mode. Choose off, dsp, or deep.');
+            return;
+          }
+          if (Platform.OS === 'android' && NativeModules.BlogCamAudioModule) {
+            try {
+              const applied = await NativeModules.BlogCamAudioModule.setAudioMode(targetAudioMode);
+              response.json({ ok: true, audioMode: applied });
+              return;
+            } catch (error) {
+              respondError(
+                response,
+                error instanceof Error ? error.message : 'Could not set audio mode.',
+                500,
+              );
+              return;
+            }
+          }
+          response.json({ ok: true, audioMode: targetAudioMode });
           return;
         }
         case 'stats': {
@@ -1383,11 +1455,26 @@ export default function RemoteControlSession({ onStop }: Props) {
             Open this address on a browser connected to the same Wi-Fi or phone
             hotspot:
           </Text>
-          <Text selectable style={styles.url}>
-            {serverStarted
-              ? displayUrl
-              : serverUrl || 'Starting the local server…'}
-          </Text>
+          {serverStarted && allServerUrls.length > 0 ? (
+            allServerUrls.map((url, idx) => (
+              <Text
+                key={url}
+                selectable
+                style={[
+                  styles.url,
+                  idx > 0 && { marginTop: 6, fontSize: 13, color: '#f3d09b' },
+                ]}
+              >
+                {url}
+              </Text>
+            ))
+          ) : (
+            <Text selectable style={styles.url}>
+              {serverStarted
+                ? displayUrl
+                : serverUrl || 'Starting the local server…'}
+            </Text>
+          )}
           {serverStarted && !serverUrl ? (
             <Pressable
               accessibilityRole="button"
@@ -1407,12 +1494,10 @@ export default function RemoteControlSession({ onStop }: Props) {
               </Text>
             </Pressable>
           ) : null}
-          {serverStarted && !serverUrl ? (
-            <Text style={styles.helpText}>
-              For USB debugging, run adb reverse tcp:8000 tcp:8000 on the
-              computer and open http://127.0.0.1:8000.
-            </Text>
-          ) : null}
+          <Text style={styles.helpText}>
+            For USB cable control, run adb forward tcp:8000 tcp:8000 on the
+            computer and open http://127.0.0.1:8000.
+          </Text>
           <View style={styles.pinBox}>
             <Text style={styles.pinLabel}>ONE-TIME PAIRING PIN</Text>
             <Text selectable style={styles.pin}>

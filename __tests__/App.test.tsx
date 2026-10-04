@@ -239,6 +239,9 @@ test('keeps the shared phone camera preview mounted in remote mode', async () =>
       hasFlash: jest.fn().mockResolvedValue(true),
       setKeepScreenOn: jest.fn().mockResolvedValue(undefined),
       setTorchEnabled: jest.fn().mockResolvedValue(undefined),
+      getNetworkIpAddresses: jest
+        .fn()
+        .mockResolvedValue([{ name: 'wlan0', address: '192.168.1.25' }]),
     },
   });
   let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
@@ -302,3 +305,63 @@ test('keeps the shared phone camera preview mounted in remote mode', async () =>
     jest.useRealTimers();
   }
 });
+
+test('detects hardware audio DSP capabilities on startup and enables noise suppression options', async () => {
+  const platformDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+  Object.defineProperty(Platform, 'OS', {
+    configurable: true,
+    value: 'android',
+  });
+  const mockCaps = {
+    hasHardwareNoiseSuppressor: true,
+    hasAcousticEchoCanceler: true,
+    hasAutomaticGainControl: true,
+    microphoneCount: 2,
+    micDetails: '2 microphones (Primary, Secondary Noise Canceling)',
+    deviceModel: 'Vivo V2568 (Android 16)',
+    androidVersion: 36,
+    currentAudioMode: 'dsp',
+    recommendedMode: 'dsp',
+  };
+  NativeModules.BlogCamAudioModule = {
+    checkAudioCapabilities: jest.fn().mockResolvedValue(mockCaps),
+    setAudioMode: jest.fn().mockResolvedValue('dsp'),
+    getAudioMode: jest.fn().mockResolvedValue('dsp'),
+  };
+
+  let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+  try {
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(<App />);
+      await Promise.resolve();
+    });
+
+    expect(NativeModules.BlogCamAudioModule.checkAudioCapabilities).toHaveBeenCalled();
+
+    const audioBtn = renderer!.root.findByProps({
+      accessibilityLabel: 'Audio noise suppression mode: DSP',
+    });
+    expect(audioBtn).toBeTruthy();
+
+    await ReactTestRenderer.act(() => {
+      audioBtn.props.onPress();
+    });
+
+    const texts = renderer!.root
+      .findAllByType(Text)
+      .map(node => node.props.children);
+    expect(texts).toContain('AUDIO NOISE SUPPRESSION');
+    expect(texts).toContain('DSP Hardware (Clean)');
+    expect(texts).toContain('Off (Raw Audio)');
+    expect(texts).toContain('Deep Filter (Studio AI)');
+  } finally {
+    if (renderer) {
+      await ReactTestRenderer.act(() => renderer!.unmount());
+    }
+    if (platformDescriptor) {
+      Object.defineProperty(Platform, 'OS', platformDescriptor);
+    }
+    delete NativeModules.BlogCamAudioModule;
+  }
+});
+

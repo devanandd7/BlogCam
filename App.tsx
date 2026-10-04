@@ -4,9 +4,12 @@ import {
   Alert,
   Image,
   Linking,
+  Modal,
+  NativeModules,
   PermissionsAndroid,
   Platform,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -30,6 +33,19 @@ import RemoteControlSession from './RemoteControlSession';
 type CaptureMode = 'photo' | 'video';
 type FlashMode = 'off' | 'auto' | 'on';
 type RecentCapture = { uri: string; type: CaptureMode };
+type AudioMode = 'off' | 'dsp' | 'deep';
+
+type AudioCapability = {
+  hasHardwareNoiseSuppressor: boolean;
+  hasAcousticEchoCanceler: boolean;
+  hasAutomaticGainControl: boolean;
+  microphoneCount: number;
+  micDetails: string;
+  deviceModel: string;
+  androidVersion: number;
+  currentAudioMode: AudioMode;
+  recommendedMode: 'dsp' | 'raw';
+};
 
 function fileUri(path: string) {
   return path.startsWith('file://') ? path : `file://${path}`;
@@ -73,6 +89,12 @@ function CameraScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [remoteMode, setRemoteMode] = useState(false);
   const [isHandingOffCamera, setIsHandingOffCamera] = useState(false);
+  const [audioMode, setAudioMode] = useState<AudioMode>('dsp');
+  const [audioCapability, setAudioCapability] =
+    useState<AudioCapability | null>(null);
+  const [showAudioModal, setShowAudioModal] = useState(false);
+  const [showDeepFilterWarning, setShowDeepFilterWarning] = useState(false);
+  const [startupNotice, setStartupNotice] = useState<string | null>(null);
   const { hasPermission, requestPermission } = useCameraPermission();
   const {
     hasPermission: hasMicrophonePermission,
@@ -139,6 +161,55 @@ function CameraScreen() {
     const timeout = setTimeout(() => setFocusPoint(null), 900);
     return () => clearTimeout(timeout);
   }, [focusPoint]);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && NativeModules.BlogCamAudioModule) {
+      NativeModules.BlogCamAudioModule.checkAudioCapabilities()
+        .then((caps: AudioCapability) => {
+          setAudioCapability(caps);
+          const initialMode =
+            caps.currentAudioMode === 'off' || caps.currentAudioMode === 'deep'
+              ? caps.currentAudioMode
+              : caps.hasHardwareNoiseSuppressor
+              ? 'dsp'
+              : 'off';
+          setAudioMode(initialMode);
+          if (caps.hasHardwareNoiseSuppressor) {
+            setStartupNotice(
+              `🎙 ${caps.deviceModel}: Hardware DSP Active (0% CPU, No Lag)`,
+            );
+          } else {
+            setStartupNotice(
+              `⚠️ ${caps.deviceModel}: Hardware DSP not found. Raw/Deep mode ready.`,
+            );
+          }
+          const timer = setTimeout(() => setStartupNotice(null), 5000);
+          return () => clearTimeout(timer);
+        })
+        .catch((error: Error) => {
+          console.warn(`Audio diagnostic check failed: ${error.message}`);
+        });
+    }
+  }, []);
+
+  const handleSelectAudioMode = (nextMode: AudioMode) => {
+    if (nextMode === 'deep') {
+      setShowDeepFilterWarning(true);
+      return;
+    }
+    applyAudioMode(nextMode);
+  };
+
+  const applyAudioMode = async (nextMode: AudioMode) => {
+    setAudioMode(nextMode);
+    if (Platform.OS === 'android' && NativeModules.BlogCamAudioModule) {
+      await NativeModules.BlogCamAudioModule.setAudioMode(nextMode).catch(
+        (error: Error) => {
+          console.warn(`Failed to set audio mode: ${error.message}`);
+        },
+      );
+    }
+  };
 
   const saveToGallery = async (path: string, type: CaptureMode) => {
     try {
@@ -433,12 +504,45 @@ function CameraScreen() {
                 <Text style={styles.handoffText}>Switching camera…</Text>
               </View>
             ) : null}
+            {startupNotice ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open audio diagnostic details"
+                onPress={() => {
+                  setStartupNotice(null);
+                  setShowAudioModal(true);
+                }}
+                style={styles.startupNoticePill}
+              >
+                <Text style={styles.startupNoticeText}>{startupNotice}</Text>
+                <Text style={styles.startupNoticeAction}>DETAILS ›</Text>
+              </Pressable>
+            ) : null}
             <View style={styles.topBar}>
               <View>
                 <Text style={styles.brand}>BLOGCAM</Text>
                 <Text style={styles.brandCaption}>BY PRIMADEX</Text>
               </View>
               <View style={styles.topActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Audio noise suppression mode: ${audioMode.toUpperCase()}`}
+                  onPress={() => setShowAudioModal(true)}
+                  style={[
+                    styles.audioButton,
+                    audioMode === 'dsp' && styles.audioButtonDsp,
+                    audioMode === 'deep' && styles.audioButtonDeep,
+                  ]}
+                >
+                  <Text style={styles.audioButtonIcon}>🎙</Text>
+                  <Text style={styles.audioButtonLabel}>
+                    {audioMode === 'dsp'
+                      ? 'DSP'
+                      : audioMode === 'deep'
+                      ? 'AI'
+                      : 'RAW'}
+                  </Text>
+                </Pressable>
                 {Platform.OS === 'android' ? (
                   <Pressable
                     accessibilityRole="button"
@@ -653,6 +757,280 @@ function CameraScreen() {
           ) : null}
         </View>
       )}
+
+      {/* Audio Diagnostics & Noise Suppression Sheet */}
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showAudioModal}
+        onRequestClose={() => setShowAudioModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>AUDIO NOISE SUPPRESSION</Text>
+                <Text style={styles.modalSubtitle}>
+                  HARDWARE DSP & ACOUSTIC DIAGNOSTICS
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close audio settings"
+                onPress={() => setShowAudioModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Text style={styles.modalCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              style={styles.modalScroll}
+            >
+              {/* Diagnostic Card */}
+              <View style={styles.diagnosticCard}>
+                <View style={styles.diagnosticHeader}>
+                  <Text style={styles.diagnosticDeviceTitle}>
+                    {audioCapability?.deviceModel || 'Android Device'}
+                  </Text>
+                  <View
+                    style={[
+                      styles.diagnosticBadge,
+                      audioCapability?.hasHardwareNoiseSuppressor
+                        ? styles.diagnosticBadgeSuccess
+                        : styles.diagnosticBadgeWarning,
+                    ]}
+                  >
+                    <Text style={styles.diagnosticBadgeText}>
+                      {audioCapability?.hasHardwareNoiseSuppressor
+                        ? 'DSP READY'
+                        : 'NO HARDWARE DSP'}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.diagnosticDetailsList}>
+                  <View style={styles.diagnosticItem}>
+                    <Text style={styles.diagnosticLabel}>
+                      Hardware Noise Suppressor
+                    </Text>
+                    <Text
+                      style={[
+                        styles.diagnosticValue,
+                        audioCapability?.hasHardwareNoiseSuppressor
+                          ? styles.statusPositive
+                          : styles.statusNegative,
+                      ]}
+                    >
+                      {audioCapability?.hasHardwareNoiseSuppressor
+                        ? 'Supported (Built-in DSP)'
+                        : 'Not Supported on Chipset'}
+                    </Text>
+                  </View>
+                  <View style={styles.diagnosticItem}>
+                    <Text style={styles.diagnosticLabel}>
+                      Acoustic Echo Canceler
+                    </Text>
+                    <Text
+                      style={[
+                        styles.diagnosticValue,
+                        audioCapability?.hasAcousticEchoCanceler
+                          ? styles.statusPositive
+                          : styles.statusNegative,
+                      ]}
+                    >
+                      {audioCapability?.hasAcousticEchoCanceler
+                        ? 'Supported (Hardware AEC)'
+                        : 'Unavailable'}
+                    </Text>
+                  </View>
+                  <View style={styles.diagnosticItem}>
+                    <Text style={styles.diagnosticLabel}>
+                      Microphones Detected
+                    </Text>
+                    <Text style={styles.diagnosticValue}>
+                      {audioCapability?.micDetails || '1 built-in microphone'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Modes Selection */}
+              <Text style={styles.sectionHeader}>SELECT AUDIO MODE</Text>
+
+              {/* Mode 1: DSP Hardware */}
+              <Pressable
+                accessibilityRole="button"
+                disabled={!audioCapability?.hasHardwareNoiseSuppressor}
+                onPress={() => {
+                  handleSelectAudioMode('dsp');
+                }}
+                style={[
+                  styles.optionCard,
+                  audioMode === 'dsp' && styles.optionCardSelected,
+                  !audioCapability?.hasHardwareNoiseSuppressor &&
+                    styles.optionCardDisabled,
+                ]}
+              >
+                <View style={styles.optionHeader}>
+                  <View style={styles.optionTitleRow}>
+                    <Text style={styles.optionTitle}>DSP Hardware (Clean)</Text>
+                    <View style={styles.badgeRecommended}>
+                      <Text style={styles.badgeRecommendedText}>
+                        RECOMMENDED
+                      </Text>
+                    </View>
+                  </View>
+                  <View
+                    style={[
+                      styles.radioCircle,
+                      audioMode === 'dsp' && styles.radioCircleSelected,
+                    ]}
+                  />
+                </View>
+                <Text style={styles.optionDescription}>
+                  Uses your phone's secondary microphone and DSP chipset to
+                  subtract fan, AC, and ambient room noise in real-time with 0%
+                  CPU load and zero battery drain.
+                </Text>
+                {!audioCapability?.hasHardwareNoiseSuppressor ? (
+                  <Text style={styles.unsupportedWarning}>
+                    ⚠️ Your device's audio chipset does not support hardware
+                    noise cancellation.
+                  </Text>
+                ) : null}
+              </Pressable>
+
+              {/* Mode 2: Off (Raw) */}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  handleSelectAudioMode('off');
+                }}
+                style={[
+                  styles.optionCard,
+                  audioMode === 'off' && styles.optionCardSelected,
+                ]}
+              >
+                <View style={styles.optionHeader}>
+                  <View style={styles.optionTitleRow}>
+                    <Text style={styles.optionTitle}>Off (Raw Audio)</Text>
+                    <View style={styles.badgeNeutral}>
+                      <Text style={styles.badgeNeutralText}>AUTHENTIC</Text>
+                    </View>
+                  </View>
+                  <View
+                    style={[
+                      styles.radioCircle,
+                      audioMode === 'off' && styles.radioCircleSelected,
+                    ]}
+                  />
+                </View>
+                <Text style={styles.optionDescription}>
+                  Original unaltered sound from the microphone. Preserves all
+                  room ambiance, live music, and acoustic reverberation without
+                  filtering.
+                </Text>
+              </Pressable>
+
+              {/* Mode 3: Deep Filter (Studio AI) */}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  handleSelectAudioMode('deep');
+                }}
+                style={[
+                  styles.optionCard,
+                  audioMode === 'deep' && styles.optionCardSelectedDeep,
+                ]}
+              >
+                <View style={styles.optionHeader}>
+                  <View style={styles.optionTitleRow}>
+                    <Text style={styles.optionTitle}>
+                      Deep Filter (Studio AI)
+                    </Text>
+                    <View style={styles.badgeAi}>
+                      <Text style={styles.badgeAiText}>AI FILTER</Text>
+                    </View>
+                  </View>
+                  <View
+                    style={[
+                      styles.radioCircle,
+                      audioMode === 'deep' && styles.radioCircleSelectedDeep,
+                    ]}
+                  />
+                </View>
+                <Text style={styles.optionDescription}>
+                  Neural software voice isolation. Detects human speech
+                  frequencies and aggressively eliminates non-vocal background
+                  noise.
+                </Text>
+                <View style={styles.deepFilterNotice}>
+                  <Text style={styles.deepFilterNoticeText}>
+                    ⚠️ High CPU & Battery Warning: Takes 1–3s of post-recording
+                    processing and increases phone battery consumption on longer
+                    videos.
+                  </Text>
+                </View>
+              </Pressable>
+            </ScrollView>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowAudioModal(false)}
+              style={styles.modalDoneButton}
+            >
+              <Text style={styles.modalDoneText}>DONE</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Deep Filter Advisory Dialog */}
+      <Modal
+        animationType="fade"
+        transparent
+        visible={showDeepFilterWarning}
+        onRequestClose={() => setShowDeepFilterWarning(false)}
+      >
+        <View style={styles.alertBackdrop}>
+          <View style={styles.alertCard}>
+            <View style={styles.alertIconContainer}>
+              <Text style={styles.alertIcon}>⚠️</Text>
+            </View>
+            <Text style={styles.alertTitle}>High CPU & Battery Advisory</Text>
+            <Text style={styles.alertMessage}>
+              Deep Filter performs software neural processing on every audio
+              frame. On longer video recordings, this will warm up your device,
+              increase battery drain, and require 1–3 seconds to save after
+              stopping.
+              {'\n\n'}
+              If your device has Hardware DSP (recommended), it provides
+              crystal-clear noise reduction with 0% extra battery drain.
+            </Text>
+            <View style={styles.alertActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setShowDeepFilterWarning(false)}
+                style={styles.alertCancelButton}
+              >
+                <Text style={styles.alertCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setShowDeepFilterWarning(false);
+                  applyAudioMode('deep');
+                }}
+                style={styles.alertConfirmButton}
+              >
+                <Text style={styles.alertConfirmText}>Enable Deep Filter</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -962,6 +1340,381 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderRadius: 4,
   },
+  startupNoticePill: {
+    position: 'absolute',
+    top: 56,
+    alignSelf: 'center',
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(18, 20, 26, 0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 229, 142, 0.4)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  startupNoticeText: {
+    color: '#e5e1dc',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  startupNoticeAction: {
+    color: '#38e58e',
+    fontSize: 10,
+    fontWeight: '800',
+    marginLeft: 8,
+    letterSpacing: 0.8,
+  },
+  audioButton: {
+    minHeight: 38,
+    paddingHorizontal: 10,
+    borderRadius: 19,
+    backgroundColor: 'rgba(12, 13, 16, 0.68)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  audioButtonDsp: {
+    borderColor: 'rgba(56, 229, 142, 0.8)',
+    backgroundColor: 'rgba(16, 36, 25, 0.75)',
+  },
+  audioButtonDeep: {
+    borderColor: 'rgba(168, 85, 247, 0.8)',
+    backgroundColor: 'rgba(38, 20, 54, 0.75)',
+  },
+  audioButtonIcon: {
+    fontSize: 12,
+  },
+  audioButtonLabel: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#12141a',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 24,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  modalSubtitle: {
+    color: '#e9b86e',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseText: {
+    color: '#a8abb2',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  modalScroll: {
+    marginBottom: 16,
+  },
+  diagnosticCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 18,
+  },
+  diagnosticHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  diagnosticDeviceTitle: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  diagnosticBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  diagnosticBadgeSuccess: {
+    backgroundColor: 'rgba(56, 229, 142, 0.18)',
+    borderWidth: 1,
+    borderColor: '#38e58e',
+  },
+  diagnosticBadgeWarning: {
+    backgroundColor: 'rgba(239, 189, 117, 0.18)',
+    borderWidth: 1,
+    borderColor: '#e9b86e',
+  },
+  diagnosticBadgeText: {
+    color: '#38e58e',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  diagnosticDetailsList: {
+    gap: 8,
+  },
+  diagnosticItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  diagnosticLabel: {
+    color: '#8b8e96',
+    fontSize: 12,
+  },
+  diagnosticValue: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusPositive: {
+    color: '#38e58e',
+    fontWeight: '700',
+  },
+  statusNegative: {
+    color: '#f87171',
+    fontWeight: '700',
+  },
+  sectionHeader: {
+    color: '#6f737d',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  optionCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 10,
+  },
+  optionCardSelected: {
+    borderColor: '#38e58e',
+    backgroundColor: 'rgba(56, 229, 142, 0.07)',
+  },
+  optionCardSelectedDeep: {
+    borderColor: '#a855f7',
+    backgroundColor: 'rgba(168, 85, 247, 0.07)',
+  },
+  optionCardDisabled: {
+    opacity: 0.4,
+  },
+  optionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  optionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  optionTitle: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  badgeRecommended: {
+    backgroundColor: 'rgba(56, 229, 142, 0.18)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeRecommendedText: {
+    color: '#38e58e',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  badgeNeutral: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeNeutralText: {
+    color: '#a8abb2',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  badgeAi: {
+    backgroundColor: 'rgba(168, 85, 247, 0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeAiText: {
+    color: '#c084fc',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  radioCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  radioCircleSelected: {
+    borderColor: '#38e58e',
+    backgroundColor: '#38e58e',
+  },
+  radioCircleSelectedDeep: {
+    borderColor: '#a855f7',
+    backgroundColor: '#a855f7',
+  },
+  optionDescription: {
+    color: '#9ba1ad',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  unsupportedWarning: {
+    color: '#f59e0b',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  deepFilterNotice: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.25)',
+  },
+  deepFilterNoticeText: {
+    color: '#fbbf24',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '500',
+  },
+  modalDoneButton: {
+    backgroundColor: '#e9b86e',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalDoneText: {
+    color: '#16120d',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  alertBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  alertCard: {
+    backgroundColor: '#161922',
+    borderRadius: 20,
+    padding: 22,
+    width: '100%',
+    maxWidth: 360,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 189, 117, 0.3)',
+  },
+  alertIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(239, 189, 117, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  alertIcon: {
+    fontSize: 22,
+  },
+  alertTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  alertMessage: {
+    color: '#b0b5c1',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 20,
+  },
+  alertActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  alertCancelButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)' ,
+  },
+  alertCancelText: {
+    color: '#d1d5db',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  alertConfirmButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 10,
+    backgroundColor: '#a855f7',
+  },
+  alertConfirmText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
 });
 
 export default App;
+

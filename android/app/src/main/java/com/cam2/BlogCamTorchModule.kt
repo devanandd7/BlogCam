@@ -53,6 +53,33 @@ class BlogCamTorchModule(
   }
 
   @ReactMethod
+  fun getNetworkIpAddresses(promise: Promise) {
+    try {
+      val array = com.facebook.react.bridge.Arguments.createArray()
+      val interfaces = java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+      for (intf in interfaces) {
+        if (intf.isLoopback || !intf.isUp) continue
+        val addrs = java.util.Collections.list(intf.inetAddresses)
+        for (addr in addrs) {
+          if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+            val host = addr.hostAddress
+            if (host != null && !host.startsWith("127.") && !host.startsWith("169.254.")) {
+              val map = com.facebook.react.bridge.Arguments.createMap()
+              map.putString("name", intf.name)
+              map.putString("displayName", intf.displayName)
+              map.putString("address", host)
+              array.pushMap(map)
+            }
+          }
+        }
+      }
+      promise.resolve(array)
+    } catch (e: Exception) {
+      promise.resolve(com.facebook.react.bridge.Arguments.createArray())
+    }
+  }
+
+  @ReactMethod
   fun hasFlash(promise: Promise) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
       promise.resolve(false)

@@ -65,6 +65,18 @@ const remoteControlPage = String.raw`<!doctype html>
       <div id="settingsPanel" class="settings-panel hidden">
         <label>LIVE CAMERA QUALITY</label>
         <p>Up to 720p / 30 fps</p>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label style="margin:0">AUDIO NOISE SUPPRESSION</label>
+            <span id="audioHwBadge" class="badge" style="padding:2px 8px;font-size:10px;color:#38e58e;border-color:rgba(56,229,142,0.3)">DSP READY</span>
+          </div>
+          <div class="controls" style="grid-template-columns:repeat(3,1fr);margin-top:6px">
+            <button id="audioDsp" class="secondary selected" style="font-size:12px;padding:8px 4px">DSP (Clean)</button>
+            <button id="audioRaw" class="secondary" style="font-size:12px;padding:8px 4px">Off (Raw)</button>
+            <button id="audioDeep" class="secondary" style="font-size:12px;padding:8px 4px">AI Filter</button>
+          </div>
+          <p id="audioNotice" style="font-size:11px;color:var(--muted);margin-top:8px">Hardware DSP subtraction active (0% phone CPU load).</p>
+        </div>
       </div>
       <div class="controls record-controls">
         <button id="record" class="danger">● &nbsp;Record</button>
@@ -76,7 +88,7 @@ const remoteControlPage = String.raw`<!doctype html>
       </div>
     </div>
     <div class="card stats"><div class="stat"><small>PHONE BATTERY</small><strong id="battery">—</strong></div><div class="stat"><small>PHONE FREE STORAGE</small><strong id="storage">—</strong></div></div>
-    <p class="notice">Videos are recorded on the phone and saved to the BlogCam Gallery album. Keep BlogCam open in the foreground. For USB debugging, run <code>adb reverse tcp:8000 tcp:8000</code> on the computer.</p>
+    <p class="notice">Videos are recorded on the phone and saved to the BlogCam Gallery album. Keep BlogCam open in the foreground. For USB cable control, run <code>adb forward tcp:8000 tcp:8000</code> on the computer.</p>
   </section>
   <section id="closedCard" class="card hidden">
     <h1>Remote session closed</h1>
@@ -360,6 +372,18 @@ const remoteControlPage = String.raw`<!doctype html>
       : byId("flash").textContent;
     byId("photoMode").classList.toggle("selected", status.captureMode === "photo");
     byId("videoMode").classList.toggle("selected", status.captureMode === "video");
+    if (status.audioMode) {
+      byId("audioDsp").classList.toggle("selected", status.audioMode === "dsp");
+      byId("audioRaw").classList.toggle("selected", status.audioMode === "off");
+      byId("audioDeep").classList.toggle("selected", status.audioMode === "deep");
+    }
+    if (status.audioCapabilities) {
+      const hasDsp = status.audioCapabilities.hasHardwareNoiseSuppressor;
+      byId("audioHwBadge").textContent = hasDsp ? "DSP READY" : "NO HARDWARE DSP";
+      byId("audioHwBadge").style.color = hasDsp ? "#38e58e" : "#f59e0b";
+      byId("audioHwBadge").style.borderColor = hasDsp ? "rgba(56,229,142,0.3)" : "rgba(245,158,11,0.3)";
+      byId("audioDsp").disabled = !hasDsp;
+    }
   }
 
   async function refreshStatus() {
@@ -539,6 +563,40 @@ const remoteControlPage = String.raw`<!doctype html>
   byId("pause").addEventListener("click", pauseRecording);
   byId("resume").addEventListener("click", resumeRecording);
   byId("end").addEventListener("click", endRecording);
+  async function setAudioMode(mode) {
+    if (mode === "deep") {
+      const proceed = confirm(
+        "Deep Filter (Studio AI) Warning:\n\n" +
+        "Neural software noise filtering runs on phone CPU. On longer videos, this will cause device warming, higher battery consumption, and a 1–3s save delay.\n\n" +
+        "Do you want to enable Deep Filter?"
+      );
+      if (!proceed) return;
+    }
+    try {
+      const result = await api("audio-mode", {audioMode: mode});
+      if (result.ok) {
+        byId("audioDsp").classList.toggle("selected", mode === "dsp");
+        byId("audioRaw").classList.toggle("selected", mode === "off");
+        byId("audioDeep").classList.toggle("selected", mode === "deep");
+        if (mode === "dsp") {
+          byId("audioNotice").textContent = "Hardware DSP active (secondary mic subtraction, 0% CPU).";
+          tell("Audio mode set to DSP Hardware (Clean).");
+        } else if (mode === "off") {
+          byId("audioNotice").textContent = "Raw audio active (unfiltered natural acoustics).";
+          tell("Audio mode set to Off (Raw Audio).");
+        } else {
+          byId("audioNotice").textContent = "Deep Filter active (Neural AI voice isolation).";
+          tell("Audio mode set to Deep Filter (Studio AI).");
+        }
+      }
+    } catch (e) {
+      tell("Failed to update audio mode: " + e.message);
+    }
+  }
+
+  byId("audioDsp").addEventListener("click", () => setAudioMode("dsp"));
+  byId("audioRaw").addEventListener("click", () => setAudioMode("off"));
+  byId("audioDeep").addEventListener("click", () => setAudioMode("deep"));
   byId("disconnect").addEventListener("click", reconnect);
   byId("closeSession").addEventListener("click", closeSession);
   window.addEventListener("pagehide", () => {
