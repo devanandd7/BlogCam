@@ -18,6 +18,62 @@ After installing the camera dependencies, rebuild the native app (a Metro reload
 is not enough). On iOS, install the updated CocoaPods dependencies with
 `bundle exec pod install` before rebuilding.
 
+## Android remote controls
+
+Tap **REMOTE** in the Android camera screen to start a local HTTP server on port
+`8000`. The app displays its actual Wi-Fi/hotspot address and a randomly
+generated four-digit PIN. Open the shown URL in a browser on the same local
+network, enter the PIN, and use the one-time paired session to access live
+preview, camera flip, flash, photo capture, video recording, pause/resume, phone
+battery and free storage. The video preview uses a direct WebRTC stream.
+Remote video recording always uses VisionCamera's native Android recorder and
+saves directly to the `BlogCam` gallery album. The browser only controls the
+phone camera; it does not record or save video on the computer. WebRTC and
+native recording share one VisionCamera session: native camera frames feed
+the WebRTC preview while the native recorder writes video and microphone audio
+to the phone. The webpage preview stays live while recording and pause/resume
+operate on the native recorder without stopping the camera session. The shared
+camera mode is up to 720p and 30 fps, depending on the active camera's supported
+formats, to keep frame processing and browser preview responsive.
+Photos are still captured from the live stream, not at the camera sensor's
+full still-photo resolution.
+
+The remote flash control waits for Android to confirm the torch state and
+reports if the active camera prevents the phone from changing it. If the torch
+is enabled, BlogCam carries that setting into native recording and keeps it on
+until the user turns it off. The webpage reflects the phone's flash state when
+reconnecting to an existing remote session.
+Starting a remote recording selects video mode and shows a three-second setup
+countdown before starting the native phone recorder.
+After the browser connects, the phone hides the pairing card and shows the
+remote photo/video mode, countdown, recording timer, and pause/resume status
+over the camera preview. Remote recordings use the same native VisionCamera
+pipeline as manual recordings.
+
+Keep BlogCam open in the foreground during remote use. The session accepts one
+PIN pairing; five incorrect PIN attempts lock that PIN until remote mode is
+restarted. An authenticated session does not expire due to inactivity; it stays
+active until **Close session** is selected in the browser or **Stop remote
+camera** is selected in BlogCam. Closing the session stops the server and
+camera; start Remote again on the phone to pair with a fresh PIN. The PIN is
+consumed by the first browser that pairs. The browser remembers its session
+token locally and attempts to reconnect after a page reload while the phone
+session is still active.
+
+The camera video travels directly between the phone and browser over WebRTC;
+the web page loading only confirms that the HTTP control server is reachable.
+Both devices must be able to communicate directly on the same local network.
+Guest Wi-Fi, router client/AP isolation, or a firewall can block either the
+phone's HTTP port `8000` or the direct video route. Use a non-guest Wi-Fi
+network with client isolation disabled, or connect the laptop to the phone's
+hotspot. If pairing succeeds but video does not, use **Reconnect camera** and
+check that the page reports a connected video link and then a live preview.
+
+The local web server uses plain HTTP, so use it only on a trusted private
+network. USB `adb reverse tcp:8000 tcp:8000` can forward the HTTP control page
+to `http://127.0.0.1:8000`, but does not forward WebRTC's direct video traffic;
+use Wi-Fi or a phone hotspot for live preview and stream-based photo capture.
+
 ## Step 1: Start Metro
 
 First, you will need to run **Metro**, the JavaScript build tool for React Native.
@@ -109,4 +165,5 @@ To learn more about React Native, take a look at the following resources:
 - [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
 - [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
 - [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+
 #

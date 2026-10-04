@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Linking,
@@ -24,6 +25,7 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
+import RemoteControlSession from './RemoteControlSession';
 
 type CaptureMode = 'photo' | 'video';
 type FlashMode = 'off' | 'auto' | 'on';
@@ -49,6 +51,8 @@ function App() {
   );
 }
 
+const CAMERA_HANDOFF_TIMEOUT_MS = 2500;
+
 function CameraScreen() {
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<Camera>(null);
@@ -67,6 +71,8 @@ function CameraScreen() {
     null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [remoteMode, setRemoteMode] = useState(false);
+  const [isHandingOffCamera, setIsHandingOffCamera] = useState(false);
   const { hasPermission, requestPermission } = useCameraPermission();
   const {
     hasPermission: hasMicrophonePermission,
@@ -105,6 +111,18 @@ function CameraScreen() {
     );
     return () => clearInterval(timer);
   }, [isRecording]);
+
+  useEffect(() => {
+    if (!isHandingOffCamera) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      setIsHandingOffCamera(false);
+      setRemoteMode(true);
+    }, CAMERA_HANDOFF_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [isHandingOffCamera]);
 
   useEffect(() => {
     if (facing === 'front') {
@@ -302,6 +320,10 @@ function CameraScreen() {
     );
   };
 
+  if (remoteMode) {
+    return <RemoteControlSession onStop={() => setRemoteMode(false)} />;
+  }
+
   if (!hasPermission) {
     return (
       <View style={[styles.permissionScreen, { paddingTop: insets.top + 32 }]}>
@@ -360,7 +382,7 @@ function CameraScreen() {
               ref={cameraRef}
               style={StyleSheet.absoluteFill}
               device={device}
-              isActive
+              isActive={!isHandingOffCamera}
               photo
               video
               audio={hasMicrophonePermission}
@@ -375,6 +397,12 @@ function CameraScreen() {
               zoom={zoom}
               enableZoomGesture
               onInitialized={() => setIsReady(true)}
+              onStopped={() => {
+                if (isHandingOffCamera) {
+                  setIsHandingOffCamera(false);
+                  setRemoteMode(true);
+                }
+              }}
               onError={error =>
                 setErrorMessage(`Camera error: ${error.message}`)
               }
@@ -399,24 +427,52 @@ function CameraScreen() {
               },
             ]}
           >
+            {isHandingOffCamera ? (
+              <View style={styles.handoffNotice}>
+                <ActivityIndicator color="#efbd75" />
+                <Text style={styles.handoffText}>Switching camera…</Text>
+              </View>
+            ) : null}
             <View style={styles.topBar}>
               <View>
                 <Text style={styles.brand}>BLOGCAM</Text>
                 <Text style={styles.brandCaption}>BY PRIMADEX</Text>
               </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Flash ${flash}`}
-                disabled={!canUseFlash}
-                onPress={cycleFlash}
-                style={[
-                  styles.roundButton,
-                  !canUseFlash && styles.disabledButton,
-                ]}
-              >
-                <Text style={styles.roundButtonIcon}>ϟ</Text>
-                <Text style={styles.flashLabel}>{flash.toUpperCase()}</Text>
-              </Pressable>
+              <View style={styles.topActions}>
+                {Platform.OS === 'android' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Start remote camera controls"
+                    disabled={
+                      !isReady ||
+                      isRecording ||
+                      isCapturing ||
+                      isHandingOffCamera
+                    }
+                    onPress={() => setIsHandingOffCamera(true)}
+                    style={[
+                      styles.remoteButton,
+                      (!isReady || isRecording || isCapturing) &&
+                        styles.disabledButton,
+                    ]}
+                  >
+                    <Text style={styles.remoteButtonText}>REMOTE</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Flash ${flash}`}
+                  disabled={!canUseFlash}
+                  onPress={cycleFlash}
+                  style={[
+                    styles.roundButton,
+                    !canUseFlash && styles.disabledButton,
+                  ]}
+                >
+                  <Text style={styles.roundButtonIcon}>ϟ</Text>
+                  <Text style={styles.flashLabel}>{flash.toUpperCase()}</Text>
+                </Pressable>
+              </View>
             </View>
 
             <View style={styles.centerControls}>
@@ -667,10 +723,33 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 24,
   },
+  handoffNotice: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: '48%',
+    zIndex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(12, 13, 16, 0.82)',
+  },
+  handoffText: {
+    color: '#f3d09b',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  topActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   brand: {
     color: '#fff',
@@ -691,6 +770,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(12, 13, 16, 0.58)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  remoteButton: {
+    minHeight: 38,
+    paddingHorizontal: 13,
+    borderRadius: 19,
+    backgroundColor: 'rgba(12, 13, 16, 0.68)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 189, 117, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  remoteButtonText: {
+    color: '#f3d09b',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.1,
   },
   roundButtonIcon: {
     color: '#fff',

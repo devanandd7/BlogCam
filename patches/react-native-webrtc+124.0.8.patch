@@ -1,0 +1,340 @@
+diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/Camera2TorchController.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/Camera2TorchController.java
+new file mode 100644
+index 0000000..ca6c3dd
+--- /dev/null
++++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/Camera2TorchController.java
+@@ -0,0 +1,177 @@
++package com.oney.WebRTCModule;
++
++import android.hardware.camera2.CameraCaptureSession;
++import android.hardware.camera2.CameraCharacteristics;
++import android.hardware.camera2.CameraDevice;
++import android.hardware.camera2.CaptureRequest;
++import android.os.Handler;
++import android.util.Range;
++import android.view.Surface;
++
++import androidx.core.util.Consumer;
++
++import org.webrtc.Camera2Capturer;
++import org.webrtc.VideoCapturer;
++
++import java.lang.reflect.Constructor;
++import java.lang.reflect.Field;
++import java.util.Arrays;
++
++final class Camera2TorchController {
++    private static final String CAMERA2_SESSION_CLASS = "org.webrtc.Camera2Session";
++
++    private Camera2TorchController() {}
++
++    static void setTorchEnabled(
++            VideoCapturer videoCapturer,
++            boolean enabled,
++            Consumer<Exception> onFinishedCallback) {
++        if (!(videoCapturer instanceof Camera2Capturer)) {
++            onFinishedCallback.accept(new IllegalStateException(
++                    "Torch control requires the active WebRTC Camera2 capture session."));
++            return;
++        }
++
++        try {
++            Object session = readField(videoCapturer, "currentSession");
++            if (session == null || !CAMERA2_SESSION_CLASS.equals(session.getClass().getName())) {
++                onFinishedCallback.accept(new IllegalStateException(
++                        "The active WebRTC Camera2 session is not ready."));
++                return;
++            }
++
++            Handler cameraHandler = (Handler) readField(session, "cameraThreadHandler");
++            if (!cameraHandler.post(() -> applyTorch(session, enabled, cameraHandler, onFinishedCallback))) {
++                onFinishedCallback.accept(new IllegalStateException(
++                        "The WebRTC camera thread is no longer available."));
++            }
++        } catch (ReflectiveOperationException | ClassCastException error) {
++            onFinishedCallback.accept(new IllegalStateException(
++                    "Could not access the active WebRTC Camera2 session.", error));
++        }
++    }
++
++    private static void applyTorch(
++            Object session,
++            boolean enabled,
++            Handler cameraHandler,
++            Consumer<Exception> onFinishedCallback) {
++        try {
++            CameraCharacteristics characteristics =
++                    (CameraCharacteristics) readField(session, "cameraCharacteristics");
++            Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
++            Boolean flashAvailable = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
++            if (facing != null && facing != CameraCharacteristics.LENS_FACING_BACK) {
++                if (enabled) {
++                    throw new IllegalStateException("Flash is only available on the rear camera.");
++                }
++                onFinishedCallback.accept(null);
++                return;
++            }
++            if (!Boolean.TRUE.equals(flashAvailable)) {
++                if (enabled) {
++                    throw new IllegalStateException("This rear camera does not have a flash.");
++                }
++                onFinishedCallback.accept(null);
++                return;
++            }
++
++            CameraDevice cameraDevice = (CameraDevice) readField(session, "cameraDevice");
++            CameraCaptureSession captureSession =
++                    (CameraCaptureSession) readField(session, "captureSession");
++            Surface surface = (Surface) readField(session, "surface");
++            if (cameraDevice == null || captureSession == null || surface == null) {
++                throw new IllegalStateException("The active WebRTC camera capture is not ready.");
++            }
++
++            CaptureRequest.Builder request = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
++            Object captureFormat = readField(session, "captureFormat");
++            Object frameRateRange = readField(captureFormat, "framerate");
++            int fpsUnitFactor = (Integer) readField(session, "fpsUnitFactor");
++            int minFrameRate = (Integer) readField(frameRateRange, "min") / fpsUnitFactor;
++            int maxFrameRate = (Integer) readField(frameRateRange, "max") / fpsUnitFactor;
++            request.set(
++                    CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
++                    new Range<>(minFrameRate, maxFrameRate));
++            request.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
++            request.set(CaptureRequest.CONTROL_AE_LOCK, false);
++            setStabilizationMode(request, characteristics);
++            setFocusMode(request, characteristics);
++            request.set(
++                    CaptureRequest.FLASH_MODE,
++                    enabled ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
++            request.addTarget(surface);
++            captureSession.setRepeatingRequest(
++                    request.build(),
++                    createCaptureCallback(session),
++                    cameraHandler);
++            onFinishedCallback.accept(null);
++        } catch (Exception error) {
++            onFinishedCallback.accept(error);
++        }
++    }
++
++    private static void setStabilizationMode(
++            CaptureRequest.Builder request,
++            CameraCharacteristics characteristics) {
++        int[] opticalModes =
++                characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION);
++        int[] videoModes =
++                characteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES);
++        if (contains(opticalModes, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)) {
++            request.set(
++                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
++                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON);
++            request.set(
++                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
++                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF);
++        } else if (contains(videoModes, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON)) {
++            request.set(
++                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
++                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
++            request.set(
++                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
++                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF);
++        }
++    }
++
++    private static void setFocusMode(
++            CaptureRequest.Builder request,
++            CameraCharacteristics characteristics) {
++        int[] focusModes = characteristics.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
++        if (contains(focusModes, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)) {
++            request.set(
++                    CaptureRequest.CONTROL_AF_MODE,
++                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
++        }
++    }
++
++    private static boolean contains(int[] values, int value) {
++        return values != null && Arrays.stream(values).anyMatch(candidate -> candidate == value);
++    }
++
++    private static CameraCaptureSession.CaptureCallback createCaptureCallback(Object session)
++            throws ReflectiveOperationException {
++        Class<?> callbackClass = Class.forName(
++                CAMERA2_SESSION_CLASS + "$CameraCaptureCallback",
++                true,
++                session.getClass().getClassLoader());
++        Constructor<?> constructor = callbackClass.getDeclaredConstructor();
++        constructor.setAccessible(true);
++        return (CameraCaptureSession.CaptureCallback) constructor.newInstance();
++    }
++
++    private static Object readField(Object target, String name) throws ReflectiveOperationException {
++        Class<?> targetClass = target.getClass();
++        while (targetClass != null) {
++            try {
++                Field field = targetClass.getDeclaredField(name);
++                field.setAccessible(true);
++                return field.get(target);
++            } catch (NoSuchFieldException ignored) {
++                targetClass = targetClass.getSuperclass();
++            }
++        }
++        throw new NoSuchFieldException(name);
++    }
++}
+diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/CameraCaptureController.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/CameraCaptureController.java
+index 1980f6c..c90b5db 100644
+--- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/CameraCaptureController.java
++++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/CameraCaptureController.java
+@@ -87,6 +87,10 @@ public class CameraCaptureController extends AbstractVideoCaptureController {
+         return settings;
+     }
+ 
++    public void setTorchEnabled(boolean enabled, Consumer<Exception> onFinishedCallback) {
++        Camera2TorchController.setTorchEnabled(videoCapturer, enabled, onFinishedCallback);
++    }
++
+     @Override
+     public void applyConstraints(ReadableMap constraints, @Nullable Consumer<Exception> onFinishedCallback) {
+         ReadableMap oldConstraints = this.constraints;
+@@ -201,6 +205,12 @@ public class CameraCaptureController extends AbstractVideoCaptureController {
+         String deviceId = ReactBridgeUtil.getMapStrValue(this.constraints, "deviceId");
+         String facingMode = ReactBridgeUtil.getMapStrValue(this.constraints, "facingMode");
+ 
++        if ("blogcam-shared".equals(deviceId)) {
++            this.isFrontFacing = false;
++            this.currentDeviceId = deviceId;
++            return new ExternalVideoCapturer();
++        }
++
+         CreateCapturerResult result = createVideoCapturer(deviceId, facingMode);
+         if (result == null) {
+             return null;
+diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ExternalVideoCapturer.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ExternalVideoCapturer.java
+new file mode 100644
+index 0000000..7c02870
+--- /dev/null
++++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/ExternalVideoCapturer.java
+@@ -0,0 +1,73 @@
++package com.oney.WebRTCModule;
++
++import android.content.Context;
++
++import org.webrtc.CapturerObserver;
++import org.webrtc.SurfaceTextureHelper;
++import org.webrtc.VideoCapturer;
++import org.webrtc.VideoFrame;
++
++public final class ExternalVideoCapturer implements VideoCapturer {
++    private static ExternalVideoCapturer activeCapturer;
++    private static CapturerObserver activeObserver;
++    private CapturerObserver observer;
++    private boolean started;
++
++    @Override
++    public void initialize(
++            SurfaceTextureHelper surfaceTextureHelper,
++            Context applicationContext,
++            CapturerObserver capturerObserver) {
++        observer = capturerObserver;
++    }
++
++    @Override
++    public void startCapture(int width, int height, int framerate) {
++        started = true;
++        if (observer != null) {
++            observer.onCapturerStarted(true);
++        }
++        synchronized (ExternalVideoCapturer.class) {
++            activeCapturer = this;
++            activeObserver = observer;
++        }
++    }
++
++    @Override
++    public void stopCapture() {
++        started = false;
++        synchronized (ExternalVideoCapturer.class) {
++            if (activeCapturer == this) {
++                activeCapturer = null;
++                activeObserver = null;
++            }
++        }
++        if (observer != null) {
++            observer.onCapturerStopped();
++        }
++    }
++
++    @Override
++    public void changeCaptureFormat(int width, int height, int framerate) {}
++
++    @Override
++    public void dispose() {
++        stopCapture();
++        observer = null;
++    }
++
++    @Override
++    public boolean isScreencast() {
++        return false;
++    }
++
++    public static boolean isStreaming() {
++        synchronized (ExternalVideoCapturer.class) {
++            return activeObserver != null;
++        }
++    }
++
++    public static void publish(VideoFrame frame) {
++        CapturerObserver currentObserver;
++        synchronized (ExternalVideoCapturer.class) {
++            currentObserver = activeObserver;
++        }
++        if (currentObserver != null) {
++            currentObserver.onFrameCaptured(frame);
++        }
++    }
++}
+diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/GetUserMediaImpl.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/GetUserMediaImpl.java
+index e15cdb8..2676050 100644
+--- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/GetUserMediaImpl.java
++++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/GetUserMediaImpl.java
+@@ -252,6 +252,23 @@ class GetUserMediaImpl {
+         }
+     }
+ 
++    void setTorchEnabled(String trackId, boolean enabled, Promise promise) {
++        TrackPrivate track = tracks.get(trackId);
++        if (track == null || !(track.videoCaptureController instanceof CameraCaptureController)) {
++            promise.reject("TORCH_UNAVAILABLE", "The active camera track is not available.");
++            return;
++        }
++
++        CameraCaptureController controller = (CameraCaptureController) track.videoCaptureController;
++        controller.setTorchEnabled(enabled, error -> {
++            if (error != null) {
++                promise.reject("TORCH_UNAVAILABLE", error.getMessage(), error);
++            } else {
++                promise.resolve(null);
++            }
++        });
++    }
++
+     void disposeTrack(String id) {
+         TrackPrivate track = tracks.remove(id);
+         if (track != null) {
+diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
+index d5a9fb4..09dddde 100644
+--- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
++++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModule.java
+@@ -909,6 +909,11 @@ public class WebRTCModule extends ReactContextBaseJavaModule {
+         });
+     }
+ 
++    @ReactMethod
++    public void mediaStreamTrackSetTorchEnabled(String id, boolean enabled, Promise promise) {
++        ThreadUtils.runOnExecutor(() -> getUserMediaImpl.setTorchEnabled(id, enabled, promise));
++    }
++
+     @ReactMethod
+     public void mediaStreamTrackSetVolume(int pcId, String id, double volume) {
+         ThreadUtils.runOnExecutor(() -> {

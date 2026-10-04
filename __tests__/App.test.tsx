@@ -4,7 +4,12 @@
 
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import { Text } from 'react-native';
+import {
+  NativeModules,
+  PermissionsAndroid,
+  Platform,
+  Text,
+} from 'react-native';
 import App from '../App';
 
 jest.mock('react-native-vision-camera', () => {
@@ -20,6 +25,14 @@ jest.mock('react-native-vision-camera', () => {
       neutralZoom: 1,
       supportsFocus: true,
       position: 'back',
+      formats: [
+        {
+          videoWidth: 1280,
+          videoHeight: 720,
+          minFps: 24,
+          maxFps: 30,
+        },
+      ],
     },
     front: {
       hasFlash: false,
@@ -34,7 +47,14 @@ jest.mock('react-native-vision-camera', () => {
 
   return {
     Camera: ReactModule.forwardRef(
-      (props: { onInitialized?: () => void }, ref: unknown) => {
+      (
+        props: {
+          onInitialized?: () => void;
+          isActive?: boolean;
+          device?: { position?: string };
+        },
+        ref: unknown,
+      ) => {
         onCameraInitialized = props.onInitialized;
         ReactModule.useImperativeHandle(ref, () => ({
           takePhoto: jest.fn().mockResolvedValue({ path: '/capture.jpg' }),
@@ -42,13 +62,18 @@ jest.mock('react-native-vision-camera', () => {
           startRecording: jest.fn(),
           stopRecording: jest.fn().mockResolvedValue(undefined),
         }));
-        return ReactModule.createElement(ReactNative.View, {
+        return ReactModule.createElement('camera-view', {
           testID: 'camera-preview',
+          isActive: props.isActive,
         });
       },
     ),
     initializeCamera: () => onCameraInitialized?.(),
     useCameraDevice: (position: 'back' | 'front') => devices[position],
+    useFrameProcessor: (processor: (frame: unknown) => void) => processor,
+    VisionCameraProxy: {
+      initFrameProcessorPlugin: () => ({ call: jest.fn() }),
+    },
     useCameraPermission: () => ({
       hasPermission: true,
       requestPermission: jest.fn().mockResolvedValue(true),
@@ -67,6 +92,49 @@ jest.mock('@react-native-camera-roll/camera-roll', () => ({
     }),
   },
 }));
+
+jest.mock('react-native-device-info', () => ({
+  __esModule: true,
+  default: {
+    getBatteryLevel: jest.fn().mockResolvedValue(0.8),
+    getFreeDiskStorage: jest.fn().mockResolvedValue(10_000_000_000),
+  },
+}));
+
+jest.mock('react-native-fs', () => ({
+  __esModule: true,
+  default: {
+    CachesDirectoryPath: '/cache',
+    appendFile: jest.fn().mockResolvedValue(undefined),
+    writeFile: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
+jest.mock('react-native-network-info', () => ({
+  NetworkInfo: {
+    getIPAddress: jest.fn().mockResolvedValue('192.168.1.25'),
+    getIPV4Address: jest.fn().mockResolvedValue('192.168.1.25'),
+  },
+}));
+
+jest.mock('react-native-http-bridge-refurbished', () => ({
+  BridgeServer: class {
+    get = jest.fn();
+    post = jest.fn();
+    listen = jest.fn();
+    stop = jest.fn();
+  },
+}));
+
+jest.mock('react-native-webrtc', () => {
+  const ReactNative = require('react-native');
+  return {
+    mediaDevices: { getUserMedia: jest.fn() },
+    RTCSessionDescription: class {},
+    RTCPeerConnection: class {},
+    RTCView: ReactNative.View,
+  };
+});
 
 jest.mock('react-native-safe-area-context', () => {
   const ReactModule = require('react');
@@ -91,8 +159,28 @@ test('renders correctly', async () => {
   expect(labels).toContain('PHOTO');
   expect(labels).toContain('VIDEO');
   expect(
+    renderer!.root.findAllByProps({
+      accessibilityLabel: 'Camera recording settings',
+    }),
+  ).toHaveLength(0);
+  expect(
     renderer!.root.findByProps({ accessibilityLabel: 'Take photo' }),
   ).toBeTruthy();
+});
+
+test('does not show the removed remote recording destination settings', async () => {
+  let renderer: ReactTestRenderer.ReactTestRenderer;
+  await ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(<App />);
+  });
+
+  expect(
+    renderer!.root.findAll(
+      node =>
+        node.type === Text &&
+        node.props.children === 'SAVE REMOTE RECORDING TO',
+    ),
+  ).toHaveLength(0);
 });
 
 test('saves a captured photo to the device gallery', async () => {
@@ -115,4 +203,102 @@ test('saves a captured photo to the device gallery', async () => {
     type: 'photo',
     album: 'BlogCam',
   });
+});
+
+test('keeps the shared phone camera preview mounted in remote mode', async () => {
+  jest.useFakeTimers();
+  const platformDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+  const permissionDescriptor = Object.getOwnPropertyDescriptor(
+    PermissionsAndroid,
+    'request',
+  );
+  const torchDescriptor = Object.getOwnPropertyDescriptor(
+    NativeModules,
+    'BlogCamTorch',
+  );
+  const remoteStream = {
+    getTracks: () => [],
+    getVideoTracks: () => [],
+    toURL: () => 'remote-preview',
+  };
+  const { mediaDevices } = require('react-native-webrtc');
+  mediaDevices.getUserMedia.mockResolvedValue(remoteStream);
+  Object.defineProperty(Platform, 'OS', {
+    configurable: true,
+    value: 'android',
+  });
+  Object.defineProperty(PermissionsAndroid, 'request', {
+    configurable: true,
+    value: jest.fn().mockResolvedValue(PermissionsAndroid.RESULTS.GRANTED),
+  });
+  Object.defineProperty(NativeModules, 'BlogCamTorch', {
+    configurable: true,
+    value: {
+      generatePairingPin: jest.fn().mockResolvedValue('1234'),
+      generateSessionToken: jest.fn().mockResolvedValue('token'),
+      hasFlash: jest.fn().mockResolvedValue(true),
+      setKeepScreenOn: jest.fn().mockResolvedValue(undefined),
+      setTorchEnabled: jest.fn().mockResolvedValue(undefined),
+    },
+  });
+  let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+
+  try {
+    await ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(<App />);
+    });
+    const { initializeCamera } = require('react-native-vision-camera');
+    await ReactTestRenderer.act(() => initializeCamera());
+
+    await ReactTestRenderer.act(() => {
+      renderer!.root
+        .findByProps({ accessibilityLabel: 'Start remote camera controls' })
+        .props.onPress();
+    });
+    expect(
+      renderer!.root.findAllByType(Text).map(node => node.props.children),
+    ).toContain('Switching camera…');
+
+    await ReactTestRenderer.act(async () => {
+      jest.advanceTimersByTime(2500);
+      for (let index = 0; index < 10; index += 1) {
+        await Promise.resolve();
+      }
+    });
+    await ReactTestRenderer.act(() => initializeCamera());
+
+    expect(
+      renderer!.root
+        .findAllByProps({ testID: 'camera-preview' })
+        .filter(node => node.props.isActive),
+    ).toHaveLength(1);
+    expect(mediaDevices.getUserMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video: expect.objectContaining({ deviceId: 'blogcam-shared' }),
+      }),
+    );
+    expect(
+      renderer!.root.findAllByType(Text).map(node => node.props.children),
+    ).toContain('STOP REMOTE CAMERA');
+  } finally {
+    if (renderer) {
+      await ReactTestRenderer.act(() => renderer!.unmount());
+    }
+    if (platformDescriptor) {
+      Object.defineProperty(Platform, 'OS', platformDescriptor);
+    }
+    if (permissionDescriptor) {
+      Object.defineProperty(
+        PermissionsAndroid,
+        'request',
+        permissionDescriptor,
+      );
+    }
+    if (torchDescriptor) {
+      Object.defineProperty(NativeModules, 'BlogCamTorch', torchDescriptor);
+    } else {
+      delete NativeModules.BlogCamTorch;
+    }
+    jest.useRealTimers();
+  }
 });
