@@ -327,6 +327,11 @@ test('detects hardware audio DSP capabilities on startup and enables noise suppr
     checkAudioCapabilities: jest.fn().mockResolvedValue(mockCaps),
     setAudioMode: jest.fn().mockResolvedValue('dsp'),
     getAudioMode: jest.fn().mockResolvedValue('dsp'),
+    processVideoAudio: jest.fn().mockResolvedValue({
+      outputPath: '/enhanced.mp4',
+      modeApplied: 'dsp',
+      voiceBoostApplied: true,
+    }),
   };
 
   let renderer: ReactTestRenderer.ReactTestRenderer | undefined;

@@ -437,15 +437,33 @@ export default function RemoteControlSession({ onStop }: Props) {
             if (!file.isFile() || Number(file.size) === 0) {
               throw new Error('The phone camera produced an empty video.');
             }
-            await CameraRoll.saveAsset(fileUri(video.path), {
+            let pathToSave = video.path;
+            if (Platform.OS === 'android' && NativeModules.BlogCamAudioModule) {
+              try {
+                const currentMode =
+                  await NativeModules.BlogCamAudioModule.getAudioMode();
+                if (currentMode && currentMode !== 'off') {
+                  const result =
+                    await NativeModules.BlogCamAudioModule.processVideoAudio(
+                      video.path,
+                      { mode: currentMode, voiceBoost: true },
+                    );
+                  if (result?.outputPath) {
+                    pathToSave = result.outputPath;
+                  }
+                }
+              } catch (e) {
+                console.warn('Remote audio processing fallback to raw:', e);
+              }
+            }
+            await CameraRoll.saveAsset(fileUri(pathToSave), {
               type: 'video',
               album: 'BlogCam',
             });
-            await RNFS.unlink(video.path).catch((error: Error) =>
-              console.warn(
-                `Could not remove temporary video: ${error.message}`,
-              ),
-            );
+            await RNFS.unlink(video.path).catch(() => {});
+            if (pathToSave !== video.path) {
+              await RNFS.unlink(pathToSave).catch(() => {});
+            }
             resolveFinished();
           } catch (error) {
             rejectFinished(

@@ -110,4 +110,34 @@ class BlogCamAudioModule(
   fun getAudioMode(promise: Promise) {
     promise.resolve(currentAudioMode)
   }
+
+  @ReactMethod
+  fun processVideoAudio(inputPath: String, options: com.facebook.react.bridge.ReadableMap?, promise: Promise) {
+    Thread {
+      try {
+        val cleanPath = inputPath.removePrefix("file://")
+        val requestedMode = options?.getString("mode") ?: currentAudioMode
+        val voiceBoost = if (options?.hasKey("voiceBoost") == true) options.getBoolean("voiceBoost") else true
+
+        val processedPath = BlogCamAudioProcessor.processVideoAudio(
+          inputPath = cleanPath,
+          mode = requestedMode,
+          voiceBoost = voiceBoost,
+        )
+
+        val result = Arguments.createMap()
+        result.putString("outputPath", processedPath)
+        result.putString("modeApplied", requestedMode)
+        result.putBoolean("voiceBoostApplied", voiceBoost)
+        promise.resolve(result)
+      } catch (e: Throwable) {
+        val fallback = Arguments.createMap()
+        fallback.putString("outputPath", inputPath.removePrefix("file://"))
+        fallback.putString("modeApplied", "off")
+        fallback.putBoolean("voiceBoostApplied", false)
+        promise.resolve(fallback)
+      }
+    }.start()
+  }
 }
+

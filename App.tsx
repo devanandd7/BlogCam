@@ -90,6 +90,10 @@ function CameraScreen() {
   const [remoteMode, setRemoteMode] = useState(false);
   const [isHandingOffCamera, setIsHandingOffCamera] = useState(false);
   const [audioMode, setAudioMode] = useState<AudioMode>('dsp');
+  const [voiceBoost, setVoiceBoost] = useState(true);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [processingTitle, setProcessingTitle] = useState('');
+  const [processingSubtitle, setProcessingSubtitle] = useState('');
   const [audioCapability, setAudioCapability] =
     useState<AudioCapability | null>(null);
   const [showAudioModal, setShowAudioModal] = useState(false);
@@ -338,9 +342,44 @@ function CameraScreen() {
     try {
       camera.startRecording({
         flash: facing === 'back' && flash === 'on' ? 'on' : 'off',
-        onRecordingFinished: video => {
+        onRecordingFinished: async video => {
           setIsRecording(false);
-          saveToGallery(video.path, 'video');
+          let videoToSave = video.path;
+          if (
+            audioMode !== 'off' &&
+            Platform.OS === 'android' &&
+            NativeModules.BlogCamAudioModule
+          ) {
+            setIsProcessingAudio(true);
+            setProcessingTitle(
+              audioMode === 'deep'
+                ? 'DEEP NOISE CLEANING'
+                : 'DSP AUDIO POLISHING',
+            );
+            setProcessingSubtitle(
+              audioMode === 'deep'
+                ? 'Eliminating background noise to zero & boosting voice…'
+                : 'Filtering ambient hum & boosting speech clarity…',
+            );
+            try {
+              const result =
+                await NativeModules.BlogCamAudioModule.processVideoAudio(
+                  video.path,
+                  { mode: audioMode, voiceBoost },
+                );
+              if (result?.outputPath) {
+                videoToSave = result.outputPath;
+              }
+            } catch (err) {
+              console.warn(
+                'Audio post-processing failed, saving original:',
+                err,
+              );
+            } finally {
+              setIsProcessingAudio(false);
+            }
+          }
+          await saveToGallery(videoToSave, 'video');
         },
         onRecordingError: error => {
           setIsRecording(false);
@@ -974,6 +1013,59 @@ function CameraScreen() {
                   </Text>
                 </View>
               </Pressable>
+
+              {/* Speech Amplification & Voice Boost Toggle */}
+              <Text style={styles.sectionHeader}>SPEECH AMPLIFICATION & CLARITY</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Voice Boost is ${voiceBoost ? 'enabled' : 'disabled'}`}
+                onPress={() => setVoiceBoost(prev => !prev)}
+                style={[
+                  styles.voiceBoostCard,
+                  voiceBoost && styles.voiceBoostCardActive,
+                ]}
+              >
+                <View style={styles.voiceBoostHeader}>
+                  <View style={styles.voiceBoostTitleRow}>
+                    <Text style={styles.voiceBoostTitle}>
+                      Voice Boost (Loud & Clear)
+                    </Text>
+                    <View
+                      style={
+                        voiceBoost
+                          ? styles.badgeRecommended
+                          : styles.badgeNeutral
+                      }
+                    >
+                      <Text
+                        style={
+                          voiceBoost
+                            ? styles.badgeRecommendedText
+                            : styles.badgeNeutralText
+                        }
+                      >
+                        {voiceBoost ? 'BOOST ON (+5dB)' : 'OFF'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View
+                    style={[
+                      styles.toggleSwitch,
+                      voiceBoost && styles.toggleSwitchActive,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.toggleThumb,
+                        voiceBoost && styles.toggleThumbActive,
+                      ]}
+                    />
+                  </View>
+                </View>
+                <Text style={styles.voiceBoostDescription}>
+                  Amplifies human speech presence (2.4 kHz) and applies dynamic soft-knee leveling so your voice is loud, crisp, and clear without distortion.
+                </Text>
+              </Pressable>
             </ScrollView>
 
             <Pressable
@@ -1027,6 +1119,30 @@ function CameraScreen() {
               >
                 <Text style={styles.alertConfirmText}>Enable Deep Filter</Text>
               </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Audio Processing Overlay Modal */}
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isProcessingAudio}
+      >
+        <View style={styles.processingBackdrop}>
+          <View style={styles.processingCard}>
+            <View style={styles.processingIconRing}>
+              <ActivityIndicator color="#efbd75" size="large" />
+            </View>
+            <Text style={styles.processingTitle}>{processingTitle}</Text>
+            <Text style={styles.processingSubtitle}>
+              {processingSubtitle}
+            </Text>
+            <View style={styles.processingBadge}>
+              <Text style={styles.processingBadgeText}>
+                {voiceBoost ? '⚡ VOCAL CLARITY BOOST ACTIVE' : '✨ CLEAN AUDIO'}
+              </Text>
             </View>
           </View>
         </View>
@@ -1713,6 +1829,118 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '700',
+  },
+  voiceBoostCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 10,
+  },
+  voiceBoostCardActive: {
+    borderColor: '#38e58e',
+    backgroundColor: 'rgba(56, 229, 142, 0.06)',
+  },
+  voiceBoostHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  voiceBoostTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  voiceBoostTitle: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  toggleSwitch: {
+    width: 42,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    padding: 2,
+    justifyContent: 'center',
+  },
+  toggleSwitchActive: {
+    backgroundColor: '#38e58e',
+  },
+  toggleThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+  },
+  toggleThumbActive: {
+    alignSelf: 'flex-end',
+  },
+  voiceBoostDescription: {
+    color: '#9ba1ad',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  processingBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 28,
+  },
+  processingCard: {
+    backgroundColor: '#13161f',
+    borderRadius: 24,
+    padding: 28,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 189, 117, 0.4)',
+    shadowColor: '#000',
+    shadowOpacity: 0.6,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  processingIconRing: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(239, 189, 117, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  processingTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  processingSubtitle: {
+    color: '#a8abb2',
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  processingBadge: {
+    backgroundColor: 'rgba(56, 229, 142, 0.15)',
+    borderRadius: 12,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 229, 142, 0.3)',
+  },
+  processingBadgeText: {
+    color: '#38e58e',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
 });
 
