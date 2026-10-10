@@ -234,7 +234,7 @@ function CameraScreen() {
       }
       const asset = await CameraRoll.saveAsset(fileUri(path), {
         type,
-        album: 'BlogCam',
+        album: 'DexCam Studio',
       });
       setRecentCapture({ uri: asset.node.image.uri, type });
       setErrorMessage(null);
@@ -426,7 +426,7 @@ function CameraScreen() {
     }
     Alert.alert(
       recentCapture.type === 'photo' ? 'Photo saved' : 'Video saved',
-      'Your capture is in the BlogCam album in your device gallery.',
+      'Your capture is in the DexCam Studio album in your device gallery.',
     );
   };
 
@@ -559,7 +559,7 @@ function CameraScreen() {
             ) : null}
             <View style={styles.topBar}>
               <View>
-                <Text style={styles.brand}>BLOGCAM</Text>
+                <Text style={styles.brand}>DEXCAM STUDIO</Text>
                 <Text style={styles.brandCaption}>BY PRIMADEX</Text>
               </View>
               <View style={styles.topActions}>

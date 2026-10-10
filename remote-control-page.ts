@@ -614,8 +614,19 @@ const remoteControlPage = String.raw`<!doctype html>
     if (!video) return;
 
     const rot = activeRotation % 360;
+    let scale = 1;
+
+    if (video.videoWidth && video.videoHeight) {
+      const isNativePortrait = video.videoHeight > video.videoWidth;
+      if (rot === 90 || rot === 270) {
+        scale = isNativePortrait ? (16 / 9) : (9 / 16);
+      }
+    } else if (rot === 90 || rot === 270) {
+      scale = 0.5625; // default fallback if metadata not loaded
+    }
+
     if (rot === 90 || rot === 270) {
-      video.style.transform = "rotate(" + rot + "deg) scale(0.5625)";
+      video.style.transform = "rotate(" + rot + "deg) scale(" + scale + ")";
     } else if (rot === 180) {
       video.style.transform = "rotate(180deg)";
     } else {
