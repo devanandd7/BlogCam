@@ -4,91 +4,144 @@ const remoteControlPage = String.raw`<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#090b0f">
-  <title>BlogCam Remote</title>
+  <title>DexCam Studio Remote</title>
   <style>
-    :root{color-scheme:dark;--bg:#090b0f;--panel:#131720;--line:#272e3a;--text:#f6f4ef;--muted:#9aa3b2;--gold:#efbd75;--red:#f15e54}
+    :root{color-scheme:dark;--bg:#05070a;--panel:#131720;--line:#272e3a;--text:#f6f4ef;--muted:#9aa3b2;--gold:#efbd75;--red:#f15e54;--glass:rgba(19,23,32,0.6)}
     *{box-sizing:border-box}
-    body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% -25%,#29303d 0,transparent 55%),var(--bg);color:var(--text);font:15px system-ui,-apple-system,"Segoe UI",sans-serif}
-    main{width:min(100% - 32px,720px);margin:auto;padding:32px 0 48px}
-    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
-    .brand{font-size:19px;font-weight:850;letter-spacing:.16em}.brand span{display:block;color:var(--red);font-size:10px;letter-spacing:.23em;margin-top:4px}
-    .badge{border:1px solid var(--line);border-radius:99px;color:var(--muted);padding:7px 11px;font-size:12px}
-    .card{background:rgba(19,23,32,.94);border:1px solid var(--line);border-radius:20px;padding:20px;margin:14px 0;box-shadow:0 16px 44px #0003}
-    h1{font-size:23px;margin:0 0 8px}p{color:var(--muted);line-height:1.5;margin:0 0 18px}
-    input{width:100%;height:54px;border-radius:13px;border:1px solid #353d4b;background:#0c0f15;color:var(--text);font:700 23px system-ui;text-align:center;letter-spacing:.42em;outline:none}
-    input:focus{border-color:var(--gold)}button{border:0;border-radius:13px;background:var(--gold);color:#17120b;font:750 14px system-ui;padding:13px 15px;cursor:pointer}
-    button:disabled{opacity:.45;cursor:default}.secondary{background:#222936;color:var(--text);border:1px solid #333c4b}.danger{background:#542421;color:#ffe2df;border:1px solid #73332f}
-    .wide{display:block;width:100%;margin-top:12px;text-align:center;text-decoration:none}.hidden{display:none!important}
-    .error{color:#ffaaa3;margin-top:12px;font-size:13px}.hint{font-size:12px;margin:12px 0 0}
-    .video-wrap{position:relative;overflow:hidden;border-radius:18px;background:#030405;aspect-ratio:16/9;display:grid;place-items:center}
-    video{display:block;width:100%;height:100%;object-fit:contain}
-    .live{position:absolute;left:12px;top:12px;background:#180d0dce;border-radius:99px;padding:6px 9px;color:#fff;font-size:11px;letter-spacing:.08em}
-    .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--red);margin-right:6px}
-    .controls{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:14px}.controls button{min-height:47px}
-    .capture-controls{grid-template-columns:repeat(2,1fr)}
-    .mode-controls{grid-template-columns:repeat(2,1fr)}
-    .mode-controls .selected{background:var(--gold);color:#17120b;border-color:var(--gold)}
-    .record-controls{grid-template-columns:repeat(3,1fr)}.record-controls button{padding-inline:6px}
-    .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{background:#0d1118;border:1px solid var(--line);border-radius:13px;padding:13px}.stat small{display:block;color:var(--muted);font-size:11px;margin-bottom:5px}.stat strong{font-size:18px}
-    .notice{font-size:12px;color:var(--muted);margin:12px 2px}.toast{min-height:19px;color:var(--gold);font-size:13px;margin-top:10px}
-    .settings-panel{margin-top:12px;padding:14px;background:#0d1118;border:1px solid var(--line);border-radius:14px}
-    .settings-panel label{display:block;color:var(--muted);font-size:11px;font-weight:750;letter-spacing:.08em;margin:0 0 6px}
-    .settings-panel p{margin:0;color:var(--text);font-size:14px}
-    @media(max-width:420px){main{padding-top:20px}.card{padding:16px}.record-controls{grid-template-columns:repeat(2,1fr)}}
+    body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 0%,#1a202c 0,var(--bg) 60%);color:var(--text);font:14px system-ui,-apple-system,sans-serif}
+    main{width:min(100%,600px);margin:auto;padding:24px 16px;display:flex;flex-direction:column;gap:16px}
+    header{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--line)}
+    .brand{font-size:18px;font-weight:800;letter-spacing:.12em}.brand span{display:block;color:var(--red);font-size:10px;letter-spacing:.2em;margin-top:2px}
+    .badge{border:1px solid var(--line);border-radius:99px;color:var(--muted);padding:6px 12px;font-size:11px;font-weight:600;letter-spacing:.05em}
+    .card{background:var(--glass);backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:24px;padding:24px;box-shadow:0 20px 40px rgba(0,0,0,0.4)}
+    h1{font-size:20px;margin:0 0 8px;font-weight:600}p{color:var(--muted);line-height:1.5;margin:0 0 16px}
+    input{width:100%;height:56px;border-radius:16px;border:1px solid #353d4b;background:#0a0c10;color:var(--text);font:700 24px system-ui;text-align:center;letter-spacing:.5em;outline:none;transition:0.2s}
+    input:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(239,189,117,0.15)}
+    .wide{display:block;width:100%;margin-top:16px;background:var(--text);color:var(--bg);border:none;border-radius:16px;padding:16px;font:700 15px system-ui;cursor:pointer;transition:0.2s}
+    .wide:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(255,255,255,0.1)}
+    .hidden{display:none!important}
+    .error{color:#ffaaa3;margin-top:12px;font-size:13px;text-align:center}.hint{font-size:12px;margin:16px 0 0;text-align:center;opacity:0.8}
+    
+    /* Video Area */
+    .video-wrap{position:relative;border-radius:24px;background:#000;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:0 12px 32px rgba(0,0,0,0.5);margin:0 auto}
+    video{display:block;width:100%;height:100%;object-fit:contain;background:#000;transition:transform 0.25s ease}
+    .video-overlay-top{position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none}
+    .live{background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);border-radius:99px;padding:6px 10px;color:#fff;font-size:11px;font-weight:600;letter-spacing:.08em;display:flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,0.1)}
+    .dot{width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red)}
+    
+    /* Icon Buttons overlay */
+    .overlay-actions{display:flex;gap:8px;pointer-events:auto}
+    .icon-btn{background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1);color:#fff;border-radius:50%;width:38px;height:38px;display:grid;place-items:center;cursor:pointer;font-size:16px;transition:0.2s;padding:0}
+    .icon-btn:hover{background:rgba(255,255,255,0.2)}
+    
+    /* Action Area */
+    .action-area{display:flex;flex-direction:column;align-items:center;padding:24px 0}
+    .mode-controls{display:flex;background:#151a23;border-radius:99px;padding:4px;margin-bottom:24px}
+    .mode-controls button{background:transparent;border:none;color:var(--muted);padding:8px 24px;border-radius:99px;font-size:13px;font-weight:600;cursor:pointer;transition:0.2s}
+    .mode-controls .selected{background:#2a3342;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,0.2)}
+    
+    .primary-controls{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:24px;width:100%}
+    .big-btn{border:none;border-radius:24px;padding:16px 32px;font:700 16px system-ui;cursor:pointer;display:flex;align-items:center;gap:8px;transition:0.2s;flex:1;justify-content:center}
+    .big-btn:disabled{opacity:0.4;cursor:not-allowed}
+    #capture{background:#2a3342;color:#fff}
+    #record{background:var(--red);color:#fff}
+    
+    .secondary-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+    .pill-btn{background:transparent;border:1px solid var(--line);border-radius:99px;padding:8px 16px;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;transition:0.2s}
+    .pill-btn:disabled{opacity:0.3;cursor:default}
+    .pill-btn:not(:disabled):hover{background:#2a3342}
+    .danger-text{color:var(--red);border-color:rgba(241,94,84,0.3)}
+    
+    .settings-panel{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:20px;margin-top:16px;animation:fadein 0.2s}
+    .settings-panel label{display:block;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.1em;margin:0 0 8px}
+    .audio-btns{display:flex;gap:8px;margin-top:8px}
+    .audio-btns button{flex:1;background:#1a202c;border:1px solid var(--line);border-radius:12px;padding:10px 4px;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
+    .audio-btns .selected{background:#2a3342;color:#fff;border-color:#4a5568}
+    
+    .stats{display:flex;gap:16px;margin-top:24px}
+    .stat{flex:1;background:rgba(255,255,255,0.03);border-radius:16px;padding:16px;text-align:center}
+    .stat small{display:block;color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.05em;margin-bottom:4px}
+    .stat strong{font-size:20px;font-weight:700}
+    
+    .toast{text-align:center;color:var(--gold);font-size:13px;min-height:20px;margin-top:12px}
+    @keyframes fadein{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
   </style>
 </head>
 <body>
 <main>
-  <header><div class="brand">BLOGCAM<span>BY PRIMADEX</span></div><div id="connection" class="badge">NOT PAIRED</div></header>
+  <header><div class="brand">DEXCAM STUDIO<span>BY PRIMADEX</span></div><div id="connection" class="badge">NOT PAIRED</div></header>
   <section id="pairCard" class="card">
     <h1>Connect to your camera</h1>
-    <p>Enter the four-digit pairing PIN shown in BlogCam on the phone.</p>
+    <p>Enter the four-digit pairing PIN shown in DexCam Studio on the phone.</p>
     <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="4" pattern="[0-9]{4}" aria-label="Four digit pairing PIN" placeholder="••••">
     <button id="pair" class="wide">Pair with PIN</button>
     <div id="pairError" class="error"></div>
     <p class="hint">Only one browser can control the camera at a time. Keep the phone open on the remote-camera screen, and use this unencrypted local connection only on a trusted network.</p>
   </section>
   <section id="cameraCard" class="hidden">
-    <div class="card">
-      <div class="video-wrap"><video id="preview" autoplay playsinline muted></video><div id="liveBadge" class="live"><span class="dot"></span>LIVE · LOCAL NETWORK</div></div>
-      <div id="toast" class="toast"></div>
-      <div class="controls mode-controls">
-        <button id="photoMode" class="secondary selected">PHOTO MODE</button>
-        <button id="videoMode" class="secondary">VIDEO MODE</button>
-      </div>
-      <div class="controls capture-controls">
-        <button id="flip" class="secondary">↻ &nbsp;Flip camera</button>
-        <button id="flash" class="secondary">ϟ &nbsp;Flash off</button>
-        <button id="settingsToggle" class="secondary" aria-expanded="false">⚙ &nbsp;Settings</button>
-        <button id="capture" class="secondary">◎ &nbsp;Capture photo</button>
-      </div>
-      <div id="settingsPanel" class="settings-panel hidden">
-        <label>LIVE CAMERA QUALITY</label>
-        <p>Up to 720p / 30 fps</p>
-        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <label style="margin:0">AUDIO NOISE SUPPRESSION</label>
-            <span id="audioHwBadge" class="badge" style="padding:2px 8px;font-size:10px;color:#38e58e;border-color:rgba(56,229,142,0.3)">DSP READY</span>
-          </div>
-          <div class="controls" style="grid-template-columns:repeat(3,1fr);margin-top:6px">
-            <button id="audioDsp" class="secondary selected" style="font-size:12px;padding:8px 4px">DSP (Clean)</button>
-            <button id="audioRaw" class="secondary" style="font-size:12px;padding:8px 4px">Off (Raw)</button>
-            <button id="audioDeep" class="secondary" style="font-size:12px;padding:8px 4px">AI Filter</button>
-          </div>
-          <p id="audioNotice" style="font-size:11px;color:var(--muted);margin-top:8px">Hardware DSP subtraction active (0% phone CPU load).</p>
+    <div class="video-wrap">
+      <video id="preview" autoplay playsinline muted></video>
+      <div class="video-overlay-top">
+        <div style="display:flex;gap:6px;align-items:center">
+          <div id="liveBadge" class="live"><span class="dot"></span>LIVE</div>
+          <div id="dimBadge" class="live" style="opacity:0.85;font-size:10px">—</div>
+        </div>
+        <div class="overlay-actions">
+          <button id="rotateAngle" class="icon-btn" title="Rotate Angle (+90°)">⟳</button>
+          <button id="flip" class="icon-btn" title="Flip camera">↻</button>
+          <button id="flash" class="icon-btn" title="Flash off">ϟ</button>
+          <button id="settingsToggle" class="icon-btn" title="Settings" aria-expanded="false">⚙</button>
         </div>
       </div>
-      <div class="controls record-controls">
-        <button id="record" class="danger">● &nbsp;Record</button>
-        <button id="pause" class="secondary" disabled>Ⅱ &nbsp;Pause</button>
-        <button id="resume" class="secondary" disabled>▶ &nbsp;Resume</button>
-        <button id="end" class="secondary" disabled>■ &nbsp;End recording</button>
-        <button id="disconnect" class="secondary">Reconnect camera</button>
-        <button id="closeSession" class="danger">Close session</button>
+    </div>
+    <div id="toast" class="toast"></div>
+
+    <div id="settingsPanel" class="settings-panel hidden">
+      <label>LIVE CAMERA QUALITY</label>
+      <p style="font-size:13px;margin-bottom:16px">Up to 720p / 30 fps streaming</p>
+      <div style="border-top:1px solid var(--line);padding-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <label style="margin:0">AUDIO NOISE SUPPRESSION</label>
+          <span id="audioHwBadge" class="badge" style="color:#38e58e;border-color:rgba(56,229,142,0.3)">DSP READY</span>
+        </div>
+        <div class="audio-btns">
+          <button id="audioDsp" class="selected">DSP (Clean)</button>
+          <button id="audioRaw">Off (Raw)</button>
+          <button id="audioDeep">AI Filter</button>
+        </div>
+        <p id="audioNotice" style="font-size:11px;color:var(--muted);margin-top:12px;text-align:center">Hardware DSP subtraction active (0% phone CPU load).</p>
       </div>
     </div>
-    <div class="card stats"><div class="stat"><small>PHONE BATTERY</small><strong id="battery">—</strong></div><div class="stat"><small>PHONE FREE STORAGE</small><strong id="storage">—</strong></div></div>
-    <p class="notice">Videos are recorded on the phone and saved to the BlogCam Gallery album. Keep BlogCam open in the foreground. For USB cable control, run <code>adb forward tcp:8000 tcp:8000</code> on the computer.</p>
+
+    <div class="action-area">
+      <div class="mode-controls">
+        <button id="photoMode" class="selected">PHOTO MODE</button>
+        <button id="videoMode">VIDEO MODE</button>
+      </div>
+
+      <div class="primary-controls">
+        <button id="capture" class="big-btn">◎ Capture photo</button>
+        <button id="record" class="big-btn">● Record</button>
+      </div>
+
+      <div class="secondary-actions">
+        <button id="pause" class="pill-btn" disabled>Ⅱ Pause</button>
+        <button id="resume" class="pill-btn" disabled>▶ Resume</button>
+        <button id="end" class="pill-btn danger-text" disabled>■ End recording</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><small>PHONE BATTERY</small><strong id="battery">—</strong></div>
+      <div class="stat"><small>PHONE FREE STORAGE</small><strong id="storage">—</strong></div>
+    </div>
+    
+    <div style="display:flex;justify-content:center;gap:16px;margin-top:16px">
+      <button id="disconnect" class="pill-btn" style="border:none">Reconnect</button>
+      <button id="closeSession" class="pill-btn danger-text" style="border:none">Close session</button>
+    </div>
+    
+    <p class="hint">Videos are recorded on the phone and saved to the Gallery album.</p>
   </section>
   <section id="closedCard" class="card hidden">
     <h1>Remote session closed</h1>
@@ -124,7 +177,9 @@ const remoteControlPage = String.raw`<!doctype html>
     captureMode = result.mode;
     byId("photoMode").classList.toggle("selected", captureMode === "photo");
     byId("videoMode").classList.toggle("selected", captureMode === "video");
-    tell(captureMode.toUpperCase() + " mode ready on BlogCam.");
+    byId("capture").classList.toggle("hidden", captureMode === "video");
+    byId("record").classList.toggle("hidden", captureMode === "photo");
+    tell(captureMode.toUpperCase() + " mode ready on DexCam Studio.");
     return captureMode;
   }
 
@@ -367,11 +422,12 @@ const remoteControlPage = String.raw`<!doctype html>
       byId("liveBadge").classList.remove("hidden");
     }
     isFlashOn = status.flashEnabled === true;
-    byId("flash").textContent = flashAvailable
-      ? (isFlashOn ? "ϟ  Flash on" : "ϟ  Flash off")
-      : byId("flash").textContent;
+    byId("flash").classList.toggle("active", isFlashOn);
+    byId("flash").title = flashAvailable ? (isFlashOn ? "Flash on" : "Flash off") : "Flash off";
     byId("photoMode").classList.toggle("selected", status.captureMode === "photo");
     byId("videoMode").classList.toggle("selected", status.captureMode === "video");
+    byId("capture").classList.toggle("hidden", status.captureMode === "video");
+    byId("record").classList.toggle("hidden", status.captureMode === "photo");
     if (status.audioMode) {
       byId("audioDsp").classList.toggle("selected", status.audioMode === "dsp");
       byId("audioRaw").classList.toggle("selected", status.audioMode === "off");
@@ -403,7 +459,8 @@ const remoteControlPage = String.raw`<!doctype html>
     const next = !isFlashOn;
     if (await command("flash", {enabled: next})) {
       isFlashOn = next;
-      byId("flash").textContent = next ? "ϟ  Flash on" : "ϟ  Flash off";
+      byId("flash").classList.toggle("active", isFlashOn);
+      byId("flash").title = isFlashOn ? "Flash is ON" : "Flash is OFF";
     }
   }
 
@@ -526,9 +583,8 @@ const remoteControlPage = String.raw`<!doctype html>
     byId("storage").textContent = stats.freeStorage;
     flashAvailable = stats.flashAvailable === true;
     byId("flash").disabled = !flashAvailable;
-    byId("flash").textContent = flashAvailable
-      ? (isFlashOn ? "ϟ  Flash on" : "ϟ  Flash off")
-      : "ϟ  No flash";
+    byId("flash").classList.toggle("active", isFlashOn);
+    byId("flash").title = flashAvailable ? (isFlashOn ? "Flash is ON" : "Flash is OFF") : "No flash";
   }
 
   async function reconnect() {
@@ -550,6 +606,39 @@ const remoteControlPage = String.raw`<!doctype html>
   byId("pair").addEventListener("click", pair);
   byId("pin").addEventListener("keydown", event => { if (event.key === "Enter") pair(); });
   byId("flip").addEventListener("click", flip);
+  
+  let activeRotation = parseInt(localStorage.getItem("dexcam_rotation") || "0", 10);
+
+  function applyVideoRotation() {
+    const video = byId("preview");
+    if (!video) return;
+
+    const rot = activeRotation % 360;
+    if (rot === 90 || rot === 270) {
+      video.style.transform = "rotate(" + rot + "deg) scale(0.5625)";
+    } else if (rot === 180) {
+      video.style.transform = "rotate(180deg)";
+    } else {
+      video.style.transform = "none";
+    }
+
+    const badge = byId("dimBadge");
+    if (badge && video.videoWidth && video.videoHeight) {
+      badge.textContent = video.videoWidth + "×" + video.videoHeight + " (" + rot + "°)";
+    }
+  }
+
+  byId("rotateAngle").addEventListener("click", () => {
+    activeRotation = (activeRotation + 90) % 360;
+    localStorage.setItem("dexcam_rotation", String(activeRotation));
+    applyVideoRotation();
+    tell("Rotation angle set to: " + activeRotation + "°");
+  });
+
+  byId("preview").addEventListener("resize", applyVideoRotation);
+  byId("preview").addEventListener("loadedmetadata", applyVideoRotation);
+  applyVideoRotation();
+
   byId("flash").addEventListener("click", flash);
   byId("settingsToggle").addEventListener("click", () => {
     const panel = byId("settingsPanel");

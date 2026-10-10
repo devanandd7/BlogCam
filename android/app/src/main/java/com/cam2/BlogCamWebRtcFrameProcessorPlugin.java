@@ -61,6 +61,14 @@ public final class BlogCamWebRtcFrameProcessorPlugin extends FrameProcessorPlugi
 
         int rotation = toRotationDegrees(frame.getOrientation());
 
+        Log.d(
+            "CameraOrientation",
+            "width=" + width
+                + ", height=" + height
+                + ", orientation=" + frame.getOrientation()
+                + ", rotation=" + rotation
+        );
+
         videoFrame = new VideoFrame(
             buffer,
             rotation,

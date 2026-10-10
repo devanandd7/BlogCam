@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   ActivityIndicator,
+  Dimensions,
   NativeModules,
   PermissionsAndroid,
   Platform,
@@ -17,6 +18,7 @@ import {
   useFrameProcessor,
   useMicrophonePermission,
   VisionCameraProxy,
+  type Orientation,
 } from 'react-native-vision-camera';
 import DeviceInfo from 'react-native-device-info';
 import RNFS from 'react-native-fs';
@@ -286,6 +288,28 @@ export default function RemoteControlSession({ onStop }: Props) {
   const pinUsedRef = useRef(false);
   const facingRef = useRef<'user' | 'environment'>('environment');
   const flashRef = useRef(false);
+  const deviceOrientationRef = useRef<'portrait' | 'landscape'>(
+    Dimensions.get('window').height >= Dimensions.get('window').width
+      ? 'portrait'
+      : 'landscape',
+  );
+
+  useEffect(() => {
+    const sub = Dimensions.addEventListener(
+      'change',
+      ({ window }: { window: { width: number; height: number } }) => {
+        deviceOrientationRef.current =
+          window.height >= window.width ? 'portrait' : 'landscape';
+      },
+    );
+    return () => sub.remove();
+  }, []);
+
+  const handleOrientationChange = (orientation: Orientation) => {
+    const isPortrait =
+      orientation === 'portrait' || orientation === 'portrait-upside-down';
+    deviceOrientationRef.current = isPortrait ? 'portrait' : 'landscape';
+  };
   const nativeCameraMountedRef = useRef(false);
   const nativeCameraReadyRef = useRef(false);
   const nativeCameraReadyResolverRef = useRef<{
@@ -345,7 +369,7 @@ export default function RemoteControlSession({ onStop }: Props) {
       setAllServerUrls([]);
       setConnectionStatus('Server running; phone network address unavailable');
       setErrorMessage(
-        'The control server is running, but BlogCam could not detect an active Wi-Fi or Hotspot IPv4 address. Connect Wi-Fi or turn on Hotspot, or use USB cable.',
+        'The control server is running, but DexCam Studio could not detect an active Wi-Fi or Hotspot IPv4 address. Connect Wi-Fi or turn on Hotspot, or use USB cable.',
       );
       return;
     }
@@ -458,7 +482,7 @@ export default function RemoteControlSession({ onStop }: Props) {
             }
             await CameraRoll.saveAsset(fileUri(pathToSave), {
               type: 'video',
-              album: 'BlogCam',
+              album: 'DexCam Studio',
             });
             await RNFS.unlink(video.path).catch(() => {});
             if (pathToSave !== video.path) {
@@ -624,7 +648,7 @@ export default function RemoteControlSession({ onStop }: Props) {
     await RNFS.writeFile(path, base64, 'base64');
     const asset = await CameraRoll.saveAsset(fileUri(path), {
       type: 'photo',
-      album: 'BlogCam',
+      album: 'DexCam Studio',
     });
     await RNFS.unlink(path).catch((error: Error) =>
       console.warn(`Could not remove temporary photo: ${error.message}`),
@@ -798,6 +822,8 @@ export default function RemoteControlSession({ onStop }: Props) {
             flashEnabled: flashRef.current && cameraFacing === 'back' && Boolean(nativeCameraDevice?.hasTorch),
             audioMode: currentAudioMode,
             audioCapabilities,
+            orientation: deviceOrientationRef.current,
+            cameraFacing,
           });
           return;
         }
@@ -1345,6 +1371,8 @@ export default function RemoteControlSession({ onStop }: Props) {
           torch={flashEnabled ? 'on' : 'off'}
           pixelFormat="yuv"
           frameProcessor={frameProcessor}
+          outputOrientation="device"
+          onOutputOrientationChanged={handleOrientationChange}
           onInitialized={onNativeCameraInitialized}
           onError={onNativeCameraError}
         />
@@ -1352,7 +1380,7 @@ export default function RemoteControlSession({ onStop }: Props) {
       <View pointerEvents="none" style={styles.scrim} />
       <View style={styles.header}>
         <View>
-          <Text style={styles.brand}>BLOGCAM</Text>
+          <Text style={styles.brand}>DEXCAM STUDIO</Text>
           <Text style={styles.byline}>BY PRIMADEX</Text>
         </View>
         <View style={styles.liveBadge}>
@@ -1525,7 +1553,7 @@ export default function RemoteControlSession({ onStop }: Props) {
           <Text style={styles.helpText}>
             Keep this screen open. Remote video recordings use the phone's
             highest supported camera resolution at up to 30 fps and save to the
-            BlogCam Gallery album. The webpage live preview is fixed at 720p /
+            DexCam Studio Gallery album. The webpage live preview is fixed at 720p /
             24 fps. For USB debugging, run adb reverse tcp:8000 tcp:8000 on the
             computer and open http://127.0.0.1:8000 there.
           </Text>
