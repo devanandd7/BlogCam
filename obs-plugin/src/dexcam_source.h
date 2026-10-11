@@ -39,6 +39,10 @@ public:
     void activate();
     void deactivate();
 
+    // Camera Hardware Controls
+    void flip_camera();
+    void toggle_flash();
+
     // Called by video_tick to pump frames from queue → OBS
     void pump_frames();
 
@@ -60,6 +64,9 @@ private:
     uint32_t                         m_height         = 720;
     uint32_t                         m_fps_target     = 30;
     bool                             m_auto_reconnect = true;
+
+    // Flash hardware state
+    std::atomic<bool>                m_flash_state{false};
 
     // Receiver pipeline
     std::shared_ptr<FrameQueue>      m_queue;

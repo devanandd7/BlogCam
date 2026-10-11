@@ -15,6 +15,7 @@
 #include <obs-module.h>
 #include <obs-source.h>
 #include <media-io/video-io.h>
+#include <obs-hotkey.h>
 
 #include <cstring>
 #include <algorithm>
@@ -51,7 +52,31 @@ DexCamSource::DexCamSource(obs_source_t* source, obs_data* settings)
     m_receiver = std::make_unique<WifiReceiver>(m_queue);
 
     apply_settings(settings);
-    // Do NOT auto-start here – start only when activated by OBS
+
+    // Register hotkeys for remote controls (Step 3)
+    obs_hotkey_register_source(
+        source,
+        "dexcam_hotkey_flip",
+        "Dex Cam: Flip Camera (Front / Rear)",
+        [](void* data, obs_hotkey_id, obs_hotkey_t*, bool pressed) {
+            if (pressed && data) {
+                static_cast<DexCamSource*>(data)->flip_camera();
+            }
+        },
+        this
+    );
+
+    obs_hotkey_register_source(
+        source,
+        "dexcam_hotkey_flash",
+        "Dex Cam: Toggle Flash (Torch)",
+        [](void* data, obs_hotkey_id, obs_hotkey_t*, bool pressed) {
+            if (pressed && data) {
+                static_cast<DexCamSource*>(data)->toggle_flash();
+            }
+        },
+        this
+    );
 }
 
 DexCamSource::~DexCamSource()
@@ -295,6 +320,30 @@ ConnectionState DexCamSource::connection_state() const
     return m_conn_state.load(std::memory_order_acquire);
 }
 
+void DexCamSource::flip_camera()
+{
+    std::lock_guard<std::mutex> lock(m_receiver_mutex);
+    if (m_receiver) {
+        blog(LOG_INFO, "[DexCam] Triggering Flip Camera");
+        m_receiver->send_control("flip");
+    }
+}
+
+void DexCamSource::toggle_flash()
+{
+    std::lock_guard<std::mutex> lock(m_receiver_mutex);
+    if (m_receiver) {
+        bool next_flash = !m_flash_state.load();
+        blog(LOG_INFO, "[DexCam] Toggling Flash -> %s", next_flash ? "ON" : "OFF");
+        if (m_receiver->send_control("flash", std::string("\"enabled\":") + (next_flash ? "true" : "false"))) {
+            m_flash_state.store(next_flash);
+        }
+    }
+}
+
+
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // OBS callback trampolines
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,7 +372,7 @@ void callbacks::get_defaults(obs_data* settings)
     obs_data_set_default_bool  (settings, PROP_RECONNECT,     true);
 }
 
-obs_properties_t* callbacks::get_properties(void* /*data*/)
+obs_properties_t* callbacks::get_properties(void* data)
 {
     obs_properties_t* props = obs_properties_create();
 
@@ -358,6 +407,19 @@ obs_properties_t* callbacks::get_properties(void* /*data*/)
 
     // Auto-reconnect
     obs_properties_add_bool(props, PROP_RECONNECT, "Auto-reconnect on disconnect");
+
+    // ── Camera Hardware Controls ─────────────────────────────────────────────
+    obs_properties_add_button2(props, PROP_BTN_FLIP, "Flip Camera (Front / Rear)",
+        [](obs_properties_t*, obs_property_t*, void* priv) -> bool {
+            if (priv) static_cast<DexCamSource*>(priv)->flip_camera();
+            return false;
+        }, data);
+
+    obs_properties_add_button2(props, PROP_BTN_FLASH, "Toggle Flash (Torch ON / OFF)",
+        [](obs_properties_t*, obs_property_t*, void* priv) -> bool {
+            if (priv) static_cast<DexCamSource*>(priv)->toggle_flash();
+            return false;
+        }, data);
 
     return props;
 }

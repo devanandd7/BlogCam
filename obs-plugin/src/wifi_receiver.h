@@ -40,6 +40,9 @@ public:
 
     ConnectionState state() const;
 
+    // Send remote camera control action to phone (Step 3)
+    bool send_control(const std::string& action, const std::string& extra_json = "");
+
     struct Stats {
         uint64_t frames_received = 0;
         uint64_t frames_dropped  = 0;

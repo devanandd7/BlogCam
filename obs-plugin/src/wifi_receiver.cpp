@@ -388,4 +388,27 @@ void WifiReceiver::worker_main(ReceiverConfig cfg,
     blog(LOG_INFO, "[DexCam] Receiver disconnected cleanly");
 }
 
+bool WifiReceiver::send_control(const std::string& action, const std::string& extra_json)
+{
+    if (m_session_token.empty() || m_phone_host.empty()) {
+        blog(LOG_WARNING, "[DexCam] Cannot send control '%s': not connected", action.c_str());
+        return false;
+    }
+
+    std::string body = "{\"action\":\"" + action + "\",\"token\":\"" + m_session_token + "\"";
+    if (!extra_json.empty()) {
+        body += "," + extra_json;
+    }
+    body += "}";
+
+    std::string resp = http_post_to_phone(m_phone_host, m_phone_port, body);
+    bool ok = (resp.find("\"ok\":true") != std::string::npos ||
+               resp.find("\"saved\":true") != std::string::npos ||
+               resp.find("\"mode\":") != std::string::npos ||
+               resp.find("\"audioMode\":") != std::string::npos);
+    blog(LOG_INFO, "[DexCam] Control '%s' -> %s (resp: %s)",
+         action.c_str(), ok ? "OK" : "FAILED", resp.c_str());
+    return ok;
+}
+
 } // namespace dexcam

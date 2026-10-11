@@ -17,9 +17,12 @@
 #define PROP_RECONNECT    "auto_reconnect"
 #define PROP_STATUS_TEXT  "status_display"  // read-only info label
 
+// Controls (Step 3: Camera hardware controls only)
+#define PROP_BTN_FLIP          "btn_flip_camera"
+#define PROP_BTN_FLASH         "btn_toggle_flash"
+
 // Connection mode values
 #define CONN_MODE_WIFI    "wifi"
-// (USB reserved for future phase)
 
 // Default values
 #define DEFAULT_RECEIVER_PORT  8000  // phone HTTP signaling server port
