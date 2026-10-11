@@ -46,8 +46,20 @@ public:
     // Called by video_tick to pump frames from queue → OBS
     void pump_frames();
 
+    // Shape & Crop configuration struct
+    struct ShapeConfig {
+        std::string shape         = "original";
+        int         offset_x      = 0;
+        int         offset_y      = 0;
+        int         zoom          = 100;
+        int         corner_radius = 20;
+        int         custom_w      = 16;
+        int         custom_h      = 9;
+    };
+
     // State accessor (thread-safe)
     ConnectionState connection_state() const;
+    std::string     get_shape() const;
 
 private:
     void apply_settings(obs_data* settings);
@@ -67,6 +79,13 @@ private:
 
     // Flash hardware state
     std::atomic<bool>                m_flash_state{false};
+
+    // Shape & Crop configuration
+    mutable std::mutex               m_shape_mutex;
+    ShapeConfig                      m_shape_cfg;
+
+    // Pre-allocated buffer for cropped / masked frames
+    std::vector<uint8_t>             m_processed_buf;
 
     // Receiver pipeline
     std::shared_ptr<FrameQueue>      m_queue;

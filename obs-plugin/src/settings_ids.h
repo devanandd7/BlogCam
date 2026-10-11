@@ -21,6 +21,24 @@
 #define PROP_BTN_FLIP          "btn_flip_camera"
 #define PROP_BTN_FLASH         "btn_toggle_flash"
 
+// Shape & Ratio Options
+#define PROP_CAMERA_SHAPE      "camera_shape"
+#define PROP_CROP_OFFSET_X     "crop_offset_x"
+#define PROP_CROP_OFFSET_Y     "crop_offset_y"
+#define PROP_CROP_ZOOM         "crop_zoom"
+#define PROP_CORNER_RADIUS     "corner_radius"
+#define PROP_CUSTOM_ASPECT_W   "custom_aspect_w"
+#define PROP_CUSTOM_ASPECT_H   "custom_aspect_h"
+
+// Camera Shape values
+#define SHAPE_ORIGINAL         "original"      // 16:9 Full Frame
+#define SHAPE_CIRCLE           "circle"        // 1:1 Round Facecam (Transparent)
+#define SHAPE_SQUARE           "square"        // 1:1 Square
+#define SHAPE_SQUIRCLE         "squircle"      // 1:1 Rounded Rectangle
+#define SHAPE_PORTRAIT         "portrait"      // 9:16 Vertical / Shorts / TikTok
+#define SHAPE_FOUR_THREE       "four_three"    // 4:3 Standard
+#define SHAPE_CUSTOM           "custom"        // Custom Ratio
+
 // Connection mode values
 #define CONN_MODE_WIFI    "wifi"
 
