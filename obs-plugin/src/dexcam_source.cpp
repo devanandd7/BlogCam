@@ -16,6 +16,7 @@
 #include <obs-source.h>
 #include <media-io/video-io.h>
 #include <obs-hotkey.h>
+#include <util/platform.h>
 
 #include <cstring>
 #include <algorithm>
@@ -48,7 +49,7 @@ DexCamSource::DexCamSource(obs_source_t* source, obs_data* settings)
 {
     blog(LOG_INFO, "[DexCam] Source created");
 
-    m_queue    = std::make_shared<FrameQueue>(3 /* max frames */);
+    m_queue    = std::make_shared<FrameQueue>(1 /* strictly 1 frame: zero-latency live drop policy */);
     m_receiver = std::make_unique<WifiReceiver>(m_queue);
 
     apply_settings(settings);
@@ -232,8 +233,8 @@ bool DexCamSource::start_receiver()
     cfg.desired_height = m_height;
     cfg.desired_fps    = m_fps_target;
 
-    // Rebuild queue (clean state)
-    m_queue    = std::make_shared<FrameQueue>(3);
+    // Rebuild queue (clean state: 1 frame zero-latency policy)
+    m_queue    = std::make_shared<FrameQueue>(1);
     m_receiver = std::make_unique<WifiReceiver>(m_queue);
 
 
@@ -307,7 +308,7 @@ void DexCamSource::pump_frames()
         obs_frame.format    = VIDEO_FORMAT_RGBA;
         obs_frame.width     = f.width;
         obs_frame.height    = f.height;
-        obs_frame.timestamp = f.timestamp_us * 1000ULL; // us -> ns for OBS
+        obs_frame.timestamp = os_gettime_ns(); // Current OBS clock: renders on next scanline without buffering
         obs_frame.data[0]   = const_cast<uint8_t*>(f.data.data());
         obs_frame.linesize[0] = f.width * 4u; // RGBA: 4 bytes/pixel
 

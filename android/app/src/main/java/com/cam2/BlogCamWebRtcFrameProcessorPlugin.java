@@ -57,7 +57,7 @@ public final class BlogCamWebRtcFrameProcessorPlugin extends FrameProcessorPlugi
         BlogCamStreamServer.pushFrame(image, width, height, rotation);
       }
 
-      if (isWebRtc) {
+      if (isWebRtc && !isDirectTcp) {
         Image.Plane[] planes = image.getPlanes();
         int chromaWidth = (width + 1) / 2;
         int chromaHeight = (height + 1) / 2;

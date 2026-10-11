@@ -78,6 +78,7 @@ type PendingOffer = {
 
 type Props = {
   onStop: () => void;
+  sessionMode?: 'obs' | 'remote';
 };
 
 function fileUri(path: string) {
@@ -185,7 +186,10 @@ async function findPhoneIpv4Addresses(): Promise<string[]> {
   return addresses;
 }
 
-export default function RemoteControlSession({ onStop }: Props) {
+export default function RemoteControlSession({
+  onStop,
+  sessionMode = 'obs',
+}: Props) {
   const insets = useSafeAreaInsets();
   const nativeCameraRef = useRef<Camera>(null);
   const {
@@ -1447,37 +1451,13 @@ export default function RemoteControlSession({ onStop }: Props) {
             ) : null}
           </View>
           <View style={styles.connectedActions}>
-            <View style={styles.modePills}>
-              <View
-                style={[
-                  styles.modePill,
-                  captureMode === 'photo' && styles.modePillActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modePillText,
-                    captureMode === 'photo' && styles.modePillTextActive,
-                  ]}
-                >
-                  PHOTO
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.modePill,
-                  captureMode === 'video' && styles.modePillActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.modePillText,
-                    captureMode === 'video' && styles.modePillTextActive,
-                  ]}
-                >
-                  VIDEO
-                </Text>
-              </View>
+            <View style={styles.streamingBadge}>
+              <View style={styles.streamingDot} />
+              <Text style={styles.streamingBadgeText}>
+                {sessionMode === 'remote'
+                  ? 'CAMERA STREAMING'
+                  : 'OBS STREAMING'}
+              </Text>
             </View>
             <Pressable
               accessibilityRole="button"
@@ -1739,32 +1719,29 @@ const styles = StyleSheet.create({
   connectedActions: {
     alignItems: 'center',
   },
-  modePills: {
+  streamingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    padding: 5,
-    borderRadius: 24,
-    backgroundColor: 'rgba(12, 15, 21, 0.84)',
-  },
-  modePill: {
-    minWidth: 90,
-    alignItems: 'center',
-    borderRadius: 18,
+    backgroundColor: 'rgba(241, 94, 84, 0.18)',
+    borderColor: 'rgba(241, 94, 84, 0.55)',
+    borderWidth: 1,
+    borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 9,
+    marginBottom: 8,
   },
-  modePillActive: {
-    backgroundColor: '#f1bd76',
+  streamingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#f15e54',
+    marginRight: 8,
   },
-  modePillText: {
+  streamingBadgeText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1,
-  },
-  modePillTextActive: {
-    color: '#19130b',
+    letterSpacing: 1.5,
   },
   statusHeading: {
     flexDirection: 'row',

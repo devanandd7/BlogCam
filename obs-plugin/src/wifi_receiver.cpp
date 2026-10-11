@@ -295,6 +295,8 @@ void WifiReceiver::worker_main(ReceiverConfig cfg,
 
     int flag = 1;
     setsockopt(stream_sock, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(flag));
+    int rcvbuf = 32 * 1024;
+    setsockopt(stream_sock, SOL_SOCKET, SO_RCVBUF, (char*)&rcvbuf, sizeof(rcvbuf));
 
     sockaddr_in stream_addr = {};
     stream_addr.sin_family = AF_INET;

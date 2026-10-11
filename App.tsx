@@ -88,6 +88,7 @@ function CameraScreen() {
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [remoteMode, setRemoteMode] = useState(false);
+  const [sessionTargetMode, setSessionTargetMode] = useState<'obs' | 'remote'>('obs');
   const [isHandingOffCamera, setIsHandingOffCamera] = useState(false);
   const [audioMode, setAudioMode] = useState<AudioMode>('dsp');
   const [voiceBoost, setVoiceBoost] = useState(true);
@@ -431,7 +432,12 @@ function CameraScreen() {
   };
 
   if (remoteMode) {
-    return <RemoteControlSession onStop={() => setRemoteMode(false)} />;
+    return (
+      <RemoteControlSession
+        onStop={() => setRemoteMode(false)}
+        sessionMode={sessionTargetMode}
+      />
+    );
   }
 
   if (!hasPermission) {
@@ -575,11 +581,7 @@ function CameraScreen() {
                 >
                   <Text style={styles.audioButtonIcon}>🎙</Text>
                   <Text style={styles.audioButtonLabel}>
-                    {audioMode === 'dsp'
-                      ? 'DSP'
-                      : audioMode === 'deep'
-                      ? 'AI'
-                      : 'RAW'}
+                    {audioMode === 'off' ? 'RAW' : 'NOISE'}
                   </Text>
                 </Pressable>
                 {Platform.OS === 'android' ? (
@@ -592,7 +594,10 @@ function CameraScreen() {
                       isCapturing ||
                       isHandingOffCamera
                     }
-                    onPress={() => setIsHandingOffCamera(true)}
+                    onPress={() => {
+                      setSessionTargetMode('remote');
+                      setIsHandingOffCamera(true);
+                    }}
                     style={[
                       styles.remoteButton,
                       (!isReady || isRecording || isCapturing) &&
@@ -692,6 +697,33 @@ function CameraScreen() {
                     ]}
                   >
                     VIDEO
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Start OBS Studio wireless stream"
+                  disabled={
+                    !isReady ||
+                    isRecording ||
+                    isCapturing ||
+                    isHandingOffCamera
+                  }
+                  onPress={() => {
+                    setSessionTargetMode('obs');
+                    setIsHandingOffCamera(true);
+                  }}
+                  style={[
+                    styles.modeButton,
+                    styles.modeButtonObs,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.modeText,
+                      styles.obsModeText,
+                    ]}
+                  >
+                    OBS
                   </Text>
                 </Pressable>
               </View>
@@ -1347,19 +1379,27 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   modeButton: {
-    minWidth: 82,
+    minWidth: 70,
     alignItems: 'center',
     paddingVertical: 9,
+    paddingHorizontal: 8,
     borderRadius: 18,
   },
   activeMode: {
     backgroundColor: '#f2c078',
+  },
+  modeButtonObs: {
+    backgroundColor: 'rgba(241, 94, 84, 0.14)',
   },
   modeText: {
     color: '#e5e1dc',
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.3,
+  },
+  obsModeText: {
+    color: '#ff827a',
+    fontWeight: '800',
   },
   activeModeText: {
     color: '#17120a',
