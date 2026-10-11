@@ -24,6 +24,7 @@ public final class BlogCamWebRtcFrameProcessorPlugin extends FrameProcessorPlugi
   private static final String TAG = "BlogCamWebRtc";
 
   public static void register() {
+    BlogCamStreamServer.start(BlogCamStreamServer.DEFAULT_PORT);
     FrameProcessorPluginRegistry.addFrameProcessorPlugin(
         "blogcamWebRtc",
         (proxy, options) -> new BlogCamWebRtcFrameProcessorPlugin()
@@ -36,7 +37,9 @@ public final class BlogCamWebRtcFrameProcessorPlugin extends FrameProcessorPlugi
       @NonNull Frame frame,
       @Nullable Map<String, Object> params
   ) {
-    if (!ExternalVideoCapturer.isStreaming()) {
+    boolean isWebRtc = ExternalVideoCapturer.isStreaming();
+    boolean isDirectTcp = BlogCamStreamServer.hasClients();
+    if (!isWebRtc && !isDirectTcp) {
       return null;
     }
 
@@ -46,40 +49,38 @@ public final class BlogCamWebRtcFrameProcessorPlugin extends FrameProcessorPlugi
         return null;
       }
 
-      Image.Plane[] planes = image.getPlanes();
       int width = frame.getWidth();
       int height = frame.getHeight();
-      int chromaWidth = (width + 1) / 2;
-      int chromaHeight = (height + 1) / 2;
+      int rotation = toRotationDegrees(frame.getOrientation());
 
-      JavaI420Buffer buffer = JavaI420Buffer.allocate(width, height);
-      VideoFrame videoFrame = null;
-      try {
-        copyPlane(planes[0], width, height, buffer.getDataY(), buffer.getStrideY());
-        copyPlane(planes[1], chromaWidth, chromaHeight, buffer.getDataU(), buffer.getStrideU());
-        copyPlane(planes[2], chromaWidth, chromaHeight, buffer.getDataV(), buffer.getStrideV());
+      if (isDirectTcp) {
+        BlogCamStreamServer.pushFrame(image, width, height, rotation);
+      }
 
-        int rotation = toRotationDegrees(frame.getOrientation());
+      if (isWebRtc) {
+        Image.Plane[] planes = image.getPlanes();
+        int chromaWidth = (width + 1) / 2;
+        int chromaHeight = (height + 1) / 2;
 
-        Log.d(
-            "CameraOrientation",
-            "width=" + width
-                + ", height=" + height
-                + ", orientation=" + frame.getOrientation()
-                + ", rotation=" + rotation
-        );
+        JavaI420Buffer buffer = JavaI420Buffer.allocate(width, height);
+        VideoFrame videoFrame = null;
+        try {
+          copyPlane(planes[0], width, height, buffer.getDataY(), buffer.getStrideY());
+          copyPlane(planes[1], chromaWidth, chromaHeight, buffer.getDataU(), buffer.getStrideU());
+          copyPlane(planes[2], chromaWidth, chromaHeight, buffer.getDataV(), buffer.getStrideV());
 
-        videoFrame = new VideoFrame(
-            buffer,
-            rotation,
-            frame.getTimestamp()
-        );
-        ExternalVideoCapturer.publish(videoFrame);
-      } finally {
-        if (videoFrame != null) {
-          videoFrame.release();
-        } else {
-          buffer.release();
+          videoFrame = new VideoFrame(
+              buffer,
+              rotation,
+              frame.getTimestamp()
+          );
+          ExternalVideoCapturer.publish(videoFrame);
+        } finally {
+          if (videoFrame != null) {
+            videoFrame.release();
+          } else {
+            buffer.release();
+          }
         }
       }
     } catch (Throwable error) {

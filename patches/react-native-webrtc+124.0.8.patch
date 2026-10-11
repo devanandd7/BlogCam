@@ -298,7 +298,31 @@ diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/Web
 index e15cdb8..2676050 100644
 --- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/GetUserMediaImpl.java
 +++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/GetUserMediaImpl.java
-@@ -252,6 +252,23 @@ class GetUserMediaImpl {
+@@ -209,8 +209,16 @@ class GetUserMediaImpl {
+         if (constraints.hasKey("video")) {
+             ReadableMap videoConstraintsMap = constraints.getMap("video");
+ 
+             Log.d(TAG, "getUserMedia(video): " + videoConstraintsMap);
+ 
++            // blogcam-shared uses ExternalVideoCapturer and does not require the Activity.
++            String videoDeviceId = videoConstraintsMap != null
++                    ? ReactBridgeUtil.getMapStrValue(videoConstraintsMap, "deviceId") : null;
++            boolean isExternalCapturer = "blogcam-shared".equals(videoDeviceId);
++
+             Activity currentActivity = this.reactContext.getCurrentActivity();
+-            if (currentActivity == null) {
++            if (currentActivity == null && !isExternalCapturer) {
+                 errorCallback.invoke("Error", "No current Activity.");
+                 return;
+             }
+ 
+             CameraCaptureController cameraCaptureController = new CameraCaptureController(
+                     currentActivity, getCameraEnumerator(), videoConstraintsMap);
+ 
+             videoTrack = createVideoTrack(cameraCaptureController);
+         }
+ 
+@@ -252,6 +269,23 @@ class GetUserMediaImpl {
          }
      }
  

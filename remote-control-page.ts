@@ -237,6 +237,9 @@ const remoteControlPage = String.raw`<!doctype html>
       if (previewTimer) clearTimeout(previewTimer);
       previewTimer = null;
       tell("Live camera preview is playing.");
+      if (obsPort) {
+        startObsStream(preview, obsPort === '1' ? 8765 : parseInt(obsPort, 10));
+      }
     };
     connection.oniceconnectionstatechange = () => {
       if (peer !== connection) return;
@@ -707,9 +710,77 @@ const remoteControlPage = String.raw`<!doctype html>
     if (statusTimer) clearInterval(statusTimer);
     statusTimer = null;
   });
-  resumeSavedSession().catch(error => {
-    tell("Could not restore the remote session: " + error.message);
-  });
+  let obsWs = null;
+  function startObsStream(video, port) {
+    if (obsWs) {
+      try { obsWs.close(); } catch (_) {}
+      obsWs = null;
+    }
+    const targetPort = port || 8765;
+    const ws = new WebSocket("ws://127.0.0.1:" + targetPort);
+    ws.binaryType = "arraybuffer";
+    obsWs = ws;
+    let canvas = document.createElement("canvas");
+    let ctx = canvas.getContext("2d", { willReadFrequently: true });
+    let isStreaming = true;
+
+    ws.onopen = () => {
+      tell("OBS plugin connected. Streaming live video…");
+      function sendFrame() {
+        if (!isStreaming || ws.readyState !== WebSocket.OPEN) return;
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+          }
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const rawBytes = imgData.data;
+
+          const combined = new Uint8Array(16 + rawBytes.byteLength);
+          const dv = new DataView(combined.buffer);
+          dv.setUint32(0, canvas.width, true);
+          dv.setUint32(4, canvas.height, true);
+          const nowUs = BigInt(Math.round(performance.now() * 1000));
+          dv.setBigUint64(8, nowUs, true);
+          combined.set(new Uint8Array(rawBytes.buffer, rawBytes.byteOffset, rawBytes.byteLength), 16);
+
+          try {
+            ws.send(combined.buffer);
+          } catch (_) {}
+        }
+        if ("requestVideoFrameCallback" in video) {
+          video.requestVideoFrameCallback(sendFrame);
+        } else {
+          requestAnimationFrame(sendFrame);
+        }
+      }
+      if ("requestVideoFrameCallback" in video) {
+        video.requestVideoFrameCallback(sendFrame);
+      } else {
+        requestAnimationFrame(sendFrame);
+      }
+    };
+    ws.onclose = ws.onerror = () => {
+      isStreaming = false;
+      if (obsWs === ws) obsWs = null;
+    };
+  }
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const autoPin = urlParams.get("pin");
+  const obsPort = urlParams.get("obs_port") || urlParams.get("obs");
+  if (autoPin) {
+    const pinInput = byId("pin");
+    if (pinInput) {
+      pinInput.value = autoPin;
+      pair();
+    }
+  } else {
+    resumeSavedSession().catch(error => {
+      tell("Could not restore the remote session: " + error.message);
+    });
+  }
 })();
 </script>
 </body>

@@ -597,9 +597,7 @@ export default function RemoteControlSession({ onStop }: Props) {
     releaseWebRtcCamera();
     flashRef.current = false;
     setFlashEnabled(false);
-    NativeModules.BlogCamTorch?.setKeepScreenOn(false).catch((error: Error) =>
-      setErrorMessage(`Could not release keep-screen-on: ${error.message}`),
-    );
+    NativeModules.BlogCamTorch?.setKeepScreenOn?.(false)?.catch?.(() => {});
     tokenRef.current = '';
     offersRef.current.splice(0).forEach(offer =>
       offer.resolve({
@@ -700,14 +698,6 @@ export default function RemoteControlSession({ onStop }: Props) {
     }
 
     if (data.action === 'pair') {
-      if (pinUsedRef.current) {
-        respondError(
-          response,
-          'This pairing PIN has already been used. Stop and restart remote mode for a new PIN.',
-          401,
-        );
-        return;
-      }
       if (pinLockedRef.current) {
         respondError(
           response,
@@ -725,10 +715,11 @@ export default function RemoteControlSession({ onStop }: Props) {
         return;
       }
       pinAttemptsRef.current = 0;
-      pinUsedRef.current = true;
       tokenRef.current =
         await NativeModules.BlogCamTorch.generateSessionToken();
-      response.json({ token: tokenRef.current });
+      setConnectionStatus('OBS Studio Connected');
+      setBrowserConnected(true);
+      response.json({ token: tokenRef.current, ok: true });
       return;
     }
 
@@ -743,6 +734,12 @@ export default function RemoteControlSession({ onStop }: Props) {
 
     try {
       switch (data.action) {
+        case 'disconnect':
+          setConnectionStatus('Waiting for OBS Studio to connect');
+          setBrowserConnected(false);
+          tokenRef.current = '';
+          response.json({ ok: true });
+          return;
         case 'close-session':
           if (recordingStateRef.current !== 'idle') {
             respondError(
@@ -1041,11 +1038,6 @@ export default function RemoteControlSession({ onStop }: Props) {
           response.json({ saved: true });
           return;
         }
-        case 'disconnect':
-          closePeer();
-          setConnectionStatus('Waiting for a browser to pair');
-          response.json({ ok: true });
-          return;
         default:
           respondError(response, 'Unknown camera action.', 404);
       }
@@ -1194,9 +1186,17 @@ export default function RemoteControlSession({ onStop }: Props) {
           'The shared camera WebRTC frame processor is unavailable. Rebuild the Android app after installing dependencies.',
         );
       }
-      await NativeModules.BlogCamTorch.setKeepScreenOn(true);
+      try {
+        await NativeModules.BlogCamTorch?.setKeepScreenOn?.(true);
+      } catch (err) {
+        console.warn('Could not set keep-screen-on:', err);
+      }
       if (!isMounted) {
-        await NativeModules.BlogCamTorch.setKeepScreenOn(false);
+        try {
+          await NativeModules.BlogCamTorch?.setKeepScreenOn?.(false);
+        } catch {
+          // ignore
+        }
         return;
       }
 
@@ -1238,6 +1238,7 @@ export default function RemoteControlSession({ onStop }: Props) {
     };
 
     start().catch(error => {
+      console.warn('Camera server start failed:', error);
       stopSessionRef.current();
       if (isMounted) {
         setServerStarted(false);
@@ -1266,9 +1267,7 @@ export default function RemoteControlSession({ onStop }: Props) {
         new Error('Remote camera session stopped.'),
       );
       nativeCameraReadyResolverRef.current = null;
-      NativeModules.BlogCamTorch?.setKeepScreenOn(false).catch((error: Error) =>
-        console.warn(`Could not release keep-screen-on: ${error.message}`),
-      );
+      NativeModules.BlogCamTorch?.setKeepScreenOn?.(false)?.catch?.(() => {});
       tokenRef.current = '';
       pendingOffers.splice(0).forEach(offer =>
         offer.resolve({

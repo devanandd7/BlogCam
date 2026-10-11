@@ -38,16 +38,18 @@ class BlogCamTorchModule(
   fun setKeepScreenOn(enabled: Boolean, promise: Promise) {
     val activity = reactContext.currentActivity
     if (activity == null) {
-      promise.reject("ACTIVITY_UNAVAILABLE", "The camera screen is not available.")
+      promise.resolve(null)
       return
     }
 
     activity.runOnUiThread {
-      if (enabled) {
-        activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-      } else {
-        activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-      }
+      try {
+        if (enabled) {
+          activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+          activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+      } catch (_: Exception) {}
       promise.resolve(null)
     }
   }

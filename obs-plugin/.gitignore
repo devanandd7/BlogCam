@@ -1,0 +1,4 @@
+﻿build/
+deps/obs-studio/
+deps/obs-sdk/lib/obs.exp
+deps/obs-sdk/lib/obs.def
