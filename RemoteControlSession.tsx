@@ -9,8 +9,10 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
+import { useEsp32Controller } from './useEsp32Controller';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 import {
   Camera,
@@ -727,7 +729,9 @@ export default function RemoteControlSession({
       return;
     }
 
-    if (!tokenRef.current || !data.token || data.token !== tokenRef.current) {
+    const isEsp32Action = typeof data.action === 'string' && data.action.startsWith('esp32-');
+
+    if (!isEsp32Action && (!tokenRef.current || !data.token || data.token !== tokenRef.current)) {
       respondError(
         response,
         'This remote session is no longer active. Restart Remote on the phone and pair again.',
@@ -738,6 +742,42 @@ export default function RemoteControlSession({
 
     try {
       switch (data.action) {
+        case 'esp32-status':
+          response.json({
+            ok: true,
+            serverReady: true,
+            obsConnected: isBrowserConnectedRef.current,
+            recordingState: recordingStateRef.current,
+            flashEnabled: flashRef.current,
+            cameraFacing: cameraFacing,
+          });
+          return;
+        case 'esp32-record-toggle':
+          if (recordingStateRef.current === 'idle') {
+            await startNativeCapture();
+          } else if (recordingStateRef.current === 'recording') {
+            await stopNativeCapture();
+          } else if (recordingStateRef.current === 'paused') {
+            await resumeNativeCapture();
+          }
+          response.json({ ok: true, state: recordingStateRef.current });
+          return;
+        case 'esp32-record-pause':
+          if (recordingStateRef.current === 'recording') {
+            await pauseNativeCapture();
+          } else if (recordingStateRef.current === 'paused') {
+            await resumeNativeCapture();
+          }
+          response.json({ ok: true, state: recordingStateRef.current });
+          return;
+        case 'esp32-flip':
+          await switchCamera();
+          response.json({ ok: true });
+          return;
+        case 'esp32-flash':
+          await setFlash(!flashRef.current);
+          response.json({ ok: true, flash: flashRef.current });
+          return;
         case 'disconnect':
           setConnectionStatus('Waiting for OBS Studio to connect');
           setBrowserConnected(false);
@@ -1349,6 +1389,63 @@ export default function RemoteControlSession({
     );
   };
 
+  const [isEditingEspIp, setIsEditingEspIp] = useState(false);
+  const [espIpInput, setEspIpInput] = useState('');
+
+  const esp32Controller = useEsp32Controller(
+    {
+      serverReady: serverStarted,
+      obsConnected: isBrowserConnected,
+      recordingState: recordingState,
+      flashEnabled: flashEnabled,
+      cameraFacing: cameraFacing,
+    },
+    {
+      onRecordToggle: async () => {
+        try {
+          if (recordingStateRef.current === 'idle') {
+            setMode('video');
+            await startNativeCapture();
+          } else if (recordingStateRef.current === 'recording') {
+            await stopNativeCapture();
+          } else if (recordingStateRef.current === 'paused') {
+            await resumeNativeCapture();
+          }
+        } catch (err) {
+          console.warn('[ESP32] Record Toggle Failed:', err);
+        }
+      },
+      onRecordPauseToggle: async () => {
+        try {
+          if (recordingStateRef.current === 'recording') {
+            await pauseNativeCapture();
+          } else if (recordingStateRef.current === 'paused') {
+            await resumeNativeCapture();
+          }
+        } catch (err) {
+          console.warn('[ESP32] Pause Toggle Failed:', err);
+        }
+      },
+      onFlipCamera: async () => {
+        try {
+          await switchCamera();
+        } catch (err) {
+          console.warn('[ESP32] Switch Camera Failed:', err);
+        }
+      },
+      onToggleFlash: async () => {
+        try {
+          await setFlash(!flashRef.current);
+        } catch (err) {
+          console.warn('[ESP32] Flash Toggle Failed:', err);
+        }
+      },
+      onCloseSession: () => {
+        stopRemoteControls();
+      },
+    },
+  );
+
   return (
     <View
       style={[
@@ -1386,11 +1483,33 @@ export default function RemoteControlSession({
           <Text style={styles.brand}>DEXCAM STUDIO</Text>
           <Text style={styles.byline}>BY PRIMADEX</Text>
         </View>
-        <View style={styles.liveBadge}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>
-            {isBrowserConnected ? 'REMOTE · CONNECTED' : 'REMOTE'}
-          </Text>
+        <View style={styles.headerBadges}>
+          <View
+            style={[
+              styles.espHeaderBadge,
+              esp32Controller.isConnected
+                ? styles.espHeaderBadgeOnline
+                : styles.espHeaderBadgeOffline,
+            ]}
+          >
+            <View
+              style={[
+                styles.espHeaderDot,
+                esp32Controller.isConnected
+                  ? styles.espHeaderDotOnline
+                  : styles.espHeaderDotOffline,
+              ]}
+            />
+            <Text style={styles.espHeaderText}>
+              {esp32Controller.isConnected ? 'ESP32 ON' : 'ESP32 OFF'}
+            </Text>
+          </View>
+          <View style={styles.liveBadge}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveText}>
+              {isBrowserConnected ? 'REMOTE · CONNECTED' : 'REMOTE'}
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -1528,6 +1647,85 @@ export default function RemoteControlSession({
             <Text selectable style={styles.pin}>
               {servicePin}
             </Text>
+          </View>
+
+          <View style={styles.espCard}>
+            <View style={styles.espCardHeader}>
+              <View style={styles.espTitleRow}>
+                <View
+                  style={[
+                    styles.espStatusDot,
+                    esp32Controller.isConnected
+                      ? styles.espStatusDotOnline
+                      : styles.espStatusDotOffline,
+                  ]}
+                />
+                <Text style={styles.espTitleText}>
+                  ESP32 BROADCAST CONTROLLER
+                </Text>
+              </View>
+              <Text
+                style={[
+                  styles.espStatusText,
+                  esp32Controller.isConnected && styles.espStatusTextOnline,
+                ]}
+              >
+                {esp32Controller.statusMessage}
+              </Text>
+            </View>
+
+            {isEditingEspIp ? (
+              <View style={styles.espInputContainer}>
+                <TextInput
+                  value={espIpInput}
+                  onChangeText={setEspIpInput}
+                  placeholder="e.g. 192.168.1.50"
+                  placeholderTextColor="#717a8a"
+                  style={styles.espTextInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="numeric"
+                />
+                <View style={styles.espInputButtons}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      if (espIpInput.trim()) {
+                        esp32Controller.setEsp32Ip(espIpInput.trim());
+                        esp32Controller.connect(espIpInput.trim());
+                      }
+                      setIsEditingEspIp(false);
+                    }}
+                    style={styles.espSaveButton}
+                  >
+                    <Text style={styles.espSaveButtonText}>SAVE & CONNECT</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setIsEditingEspIp(false)}
+                    style={styles.espCancelButton}
+                  >
+                    <Text style={styles.espCancelButtonText}>CANCEL</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.espInfoRow}>
+                <Text selectable style={styles.espIpDisplay}>
+                  ws://{esp32Controller.esp32Ip}:81
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setEspIpInput(esp32Controller.esp32Ip);
+                    setIsEditingEspIp(true);
+                  }}
+                  style={styles.espEditButton}
+                >
+                  <Text style={styles.espEditText}>EDIT IP</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
           <Text style={styles.helpText}>
             Keep this screen open. Remote video recordings use the phone's
@@ -1852,5 +2050,160 @@ const styles = StyleSheet.create({
     color: '#a4abb4',
     fontSize: 11,
     marginTop: 5,
+  },
+  headerBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  espHeaderBadge: {
+    borderRadius: 20,
+    backgroundColor: 'rgba(14, 16, 20, 0.78)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  espHeaderBadgeOnline: {
+    borderColor: 'rgba(46, 213, 115, 0.5)',
+    backgroundColor: 'rgba(46, 213, 115, 0.12)',
+  },
+  espHeaderBadgeOffline: {
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  espHeaderDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  espHeaderDotOnline: {
+    backgroundColor: '#2ed573',
+  },
+  espHeaderDotOffline: {
+    backgroundColor: '#747d8c',
+  },
+  espHeaderText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  espCard: {
+    marginTop: 14,
+    marginBottom: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(18, 22, 30, 0.95)',
+    padding: 12,
+  },
+  espCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  espTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  espStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 7,
+  },
+  espStatusDotOnline: {
+    backgroundColor: '#2ed573',
+  },
+  espStatusDotOffline: {
+    backgroundColor: '#ff4757',
+  },
+  espTitleText: {
+    color: '#f1bd76',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  espStatusText: {
+    color: '#a4b0be',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  espStatusTextOnline: {
+    color: '#2ed573',
+  },
+  espInfoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  espIpDisplay: {
+    color: '#eccc68',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  espEditButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(241, 189, 118, 0.4)',
+    backgroundColor: 'rgba(241, 189, 118, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  espEditText: {
+    color: '#f1bd76',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  espInputContainer: {
+    marginTop: 6,
+  },
+  espTextInput: {
+    backgroundColor: '#0a0d14',
+    borderWidth: 1,
+    borderColor: 'rgba(241, 189, 118, 0.5)',
+    borderRadius: 8,
+    color: '#fff',
+    fontSize: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+  },
+  espInputButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  espSaveButton: {
+    flex: 1,
+    borderRadius: 8,
+    backgroundColor: '#f1bd76',
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  espSaveButtonText: {
+    color: '#12161e',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  espCancelButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  espCancelButtonText: {
+    color: '#a4b0be',
+    fontSize: 10,
+    fontWeight: '700',
   },
 });
