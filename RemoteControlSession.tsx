@@ -1269,9 +1269,17 @@ export default function RemoteControlSession({
       setConnectionStatus('Starting the local control page…');
       bridge = new BridgeServer('blogcam_remote_controls', true);
       bridge.get('/', (_request, response) => response.html(remoteControlPage));
+      bridge.get('/favicon.ico', (_request, response) =>
+        response.send(204, 'image/x-icon', ''),
+      );
       bridge.post('/api', (request, response) =>
         handleApiRef.current(request, response),
       );
+      bridge.use((_request, response) => {
+        if (!response.closed) {
+          response.send(404, 'text/plain', 'Not Found');
+        }
+      });
       bridge.listen(PORT);
       serverRef.current = bridge;
       if (isMounted) {

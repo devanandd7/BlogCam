@@ -70,7 +70,7 @@ hotspot. If pairing succeeds but video does not, use **Reconnect camera** and
 check that the page reports a connected video link and then a live preview.
 
 The local web server uses plain HTTP, so use it only on a trusted private
-network. USB `adb reverse tcp:8000 tcp:8000` can forward the HTTP control page
+network. USB `adb forward tcp:8000 tcp:8000` can forward the HTTP control page
 to `http://127.0.0.1:8000`, but does not forward WebRTC's direct video traffic;
 use Wi-Fi or a phone hotspot for live preview and stream-based photo capture.
 
