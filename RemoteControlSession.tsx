@@ -60,6 +60,8 @@ type ActionRequest = {
   mode?: CaptureMode;
   seconds?: number;
   audioMode?: string;
+  ip?: string;
+  port?: number;
 };
 
 const LIVE_PREVIEW_PROFILE: PreviewProfile = {
@@ -299,6 +301,7 @@ export default function RemoteControlSession({
       ? 'portrait'
       : 'landscape',
   );
+  const esp32ControllerRef = useRef<any>(null);
 
   useEffect(() => {
     const sub = Dimensions.addEventListener(
@@ -742,6 +745,20 @@ export default function RemoteControlSession({
 
     try {
       switch (data.action) {
+        case 'esp32-announce': {
+          if (data.ip && typeof data.ip === 'string') {
+            const announcedIp = data.ip.trim();
+            console.log(
+              `[ESP32 AUTO-DISCOVERY] ESP32 announced its IP: ${announcedIp}`,
+            );
+            if (esp32ControllerRef.current) {
+              esp32ControllerRef.current.setEsp32Ip(announcedIp);
+              esp32ControllerRef.current.connect(announcedIp);
+            }
+          }
+          response.json({ ok: true, connected: true });
+          return;
+        }
         case 'esp32-status':
           response.json({
             ok: true,
@@ -1268,14 +1285,16 @@ export default function RemoteControlSession({
 
       setConnectionStatus('Starting the local control page…');
       bridge = new BridgeServer('blogcam_remote_controls', true);
-      bridge.get('/', (_request, response) => response.html(remoteControlPage));
-      bridge.get('/favicon.ico', (_request, response) =>
-        response.send(204, 'image/x-icon', ''),
-      );
+      bridge.get('/', async (_request, response) => {
+        response.html(remoteControlPage);
+      });
+      bridge.get('/favicon.ico', async (_request, response) => {
+        response.send(204, 'image/x-icon', '');
+      });
       bridge.post('/api', (request, response) =>
         handleApiRef.current(request, response),
       );
-      bridge.use((_request, response) => {
+      bridge.use(async (_request, response) => {
         if (!response.closed) {
           response.send(404, 'text/plain', 'Not Found');
         }
@@ -1453,6 +1472,7 @@ export default function RemoteControlSession({
       },
     },
   );
+  esp32ControllerRef.current = esp32Controller;
 
   return (
     <View
@@ -1722,16 +1742,32 @@ export default function RemoteControlSession({
                 <Text selectable style={styles.espIpDisplay}>
                   ws://{esp32Controller.esp32Ip}:81
                 </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => {
-                    setEspIpInput(esp32Controller.esp32Ip);
-                    setIsEditingEspIp(true);
-                  }}
-                  style={styles.espEditButton}
-                >
-                  <Text style={styles.espEditText}>EDIT IP</Text>
-                </Pressable>
+                <View style={styles.espActionButtons}>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={esp32Controller.isSearching}
+                    onPress={() => {
+                      esp32Controller.autoDiscover();
+                    }}
+                    style={styles.espAutoButton}
+                  >
+                    <Text style={styles.espAutoText}>
+                      {esp32Controller.isSearching
+                        ? 'SEARCHING…'
+                        : '⚡ AUTO-CONNECT'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setEspIpInput(esp32Controller.esp32Ip);
+                      setIsEditingEspIp(true);
+                    }}
+                    style={styles.espEditButton}
+                  >
+                    <Text style={styles.espEditText}>EDIT IP</Text>
+                  </Pressable>
+                </View>
               </View>
             )}
           </View>
@@ -2155,6 +2191,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.5,
+  },
+  espActionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  espAutoButton: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(46, 213, 115, 0.5)',
+    backgroundColor: 'rgba(46, 213, 115, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  espAutoText: {
+    color: '#2ed573',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   espEditButton: {
     borderRadius: 8,

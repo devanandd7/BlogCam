@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { NativeModules } from 'react-native';
 import RNFS from 'react-native-fs';
+import { NetworkInfo } from 'react-native-network-info';
 
 export type ControllerState = {
   serverReady: boolean;
@@ -28,11 +30,17 @@ export function useEsp32Controller(
   const [esp32Ip, setEsp32IpState] = useState<string>(DEFAULT_ESP32_IP);
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('Disconnected');
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeIpRef = useRef<string>(DEFAULT_ESP32_IP);
+  const isConnectedRef = useRef<boolean>(false);
+  isConnectedRef.current = isConnected;
+
+  const isSearchingRef = useRef<boolean>(false);
+
   const actionsRef = useRef<ControllerActions>(actions);
   actionsRef.current = actions;
 
@@ -136,6 +144,7 @@ export function useEsp32Controller(
       socket.onopen = () => {
         console.log(`[ESP32 WS] Connected to ${wsUrl}`);
         setIsConnected(true);
+        isConnectedRef.current = true;
         setIsConnecting(false);
         setStatusMessage('Connected');
 
@@ -186,18 +195,22 @@ export function useEsp32Controller(
       socket.onclose = () => {
         console.log('[ESP32 WS] Connection closed.');
         setIsConnected(false);
+        isConnectedRef.current = false;
         setIsConnecting(false);
         setStatusMessage('Disconnected');
         wsRef.current = null;
 
-        // Auto-reconnect after 4 seconds
-        reconnectTimerRef.current = setTimeout(() => {
-          connectToController();
-        }, 4000);
+        // Auto-reconnect after 4 seconds if not already searching
+        if (!isSearchingRef.current) {
+          reconnectTimerRef.current = setTimeout(() => {
+            connectToController();
+          }, 4000);
+        }
       };
     } catch (err) {
       console.warn('[ESP32 WS] Connection init failed:', err);
       setIsConnected(false);
+      isConnectedRef.current = false;
       setIsConnecting(false);
       setStatusMessage('Connection failed');
     }
@@ -217,25 +230,198 @@ export function useEsp32Controller(
       wsRef.current = null;
     }
     setIsConnected(false);
+    isConnectedRef.current = false;
     setIsConnecting(false);
     setStatusMessage('Disconnected');
   }, []);
 
-  // Connect on mount, cleanup on unmount
+  // Auto-Discovery: Probes the local network to find ESP32 without opening PC IDE
+  const autoDiscover = useCallback(async (): Promise<string | null> => {
+    if (isConnectedRef.current) {
+      return activeIpRef.current;
+    }
+    if (isSearchingRef.current) {
+      return null;
+    }
+
+    isSearchingRef.current = true;
+    setIsSearching(true);
+    setStatusMessage('Searching for ESP32...');
+
+    const probeIp = async (ip: string, timeoutMs = 400): Promise<boolean> => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const res = await fetch(`http://${ip}/esp32-status`, {
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.device === 'DexCam-ESP32') {
+            return true;
+          }
+        }
+      } catch {
+        // unreachable or timeout
+      }
+      return false;
+    };
+
+    try {
+      // 1. Try currently configured IP first
+      const currentIp = activeIpRef.current;
+      if (currentIp && currentIp !== '0.0.0.0') {
+        const ok = await probeIp(currentIp, 500);
+        if (ok) {
+          console.log(`[ESP32 DISCOVERY] Found on saved IP: ${currentIp}`);
+          connectToController(currentIp);
+          setIsSearching(false);
+          isSearchingRef.current = false;
+          return currentIp;
+        }
+      }
+
+      // 2. Discover local IP subnet
+      let myIp: string | null = null;
+      try {
+        if (NativeModules.BlogCamTorch?.getNetworkIpAddresses) {
+          const list = await NativeModules.BlogCamTorch.getNetworkIpAddresses();
+          if (Array.isArray(list) && list.length > 0) {
+            for (const item of list) {
+              if (
+                item?.address &&
+                item.address !== '127.0.0.1' &&
+                !item.address.startsWith('169.254.') &&
+                item.address.includes('.')
+              ) {
+                myIp = item.address;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[ESP32 DISCOVERY] BlogCamTorch IP check failed:', e);
+      }
+
+      if (!myIp) {
+        try {
+          myIp = await NetworkInfo.getIPV4Address();
+        } catch (e) {
+          console.warn('[ESP32 DISCOVERY] Could not get local IPv4:', e);
+        }
+      }
+
+      if (!myIp) {
+        try {
+          myIp = await NetworkInfo.getIPAddress();
+        } catch {}
+      }
+
+      if (!myIp || !myIp.includes('.')) {
+        setStatusMessage('ESP32 not found (No Wi-Fi)');
+        setIsSearching(false);
+        isSearchingRef.current = false;
+        return null;
+      }
+
+      const parts = myIp.split('.');
+      if (parts.length !== 4) {
+        setStatusMessage('ESP32 not found');
+        setIsSearching(false);
+        isSearchingRef.current = false;
+        return null;
+      }
+
+      const subnetPrefix = `${parts[0]}.${parts[1]}.${parts[2]}`;
+      const myHostNum = parseInt(parts[3], 10);
+
+      // 3. Build prioritized list of candidate IPs
+      const candidateList: string[] = [];
+
+      // Check Gateway first (often router or phone hotspot)
+      try {
+        const gateway = await NetworkInfo.getGatewayIPAddress();
+        if (gateway && gateway !== myIp && gateway.startsWith(subnetPrefix)) {
+          candidateList.push(gateway);
+        }
+      } catch {}
+
+      // Common DHCP ranges: 2..50, 100..160, 51..99, 161..254
+      const addRange = (start: number, end: number) => {
+        for (let i = start; i <= end; i++) {
+          const candidate = `${subnetPrefix}.${i}`;
+          if (i !== myHostNum && !candidateList.includes(candidate)) {
+            candidateList.push(candidate);
+          }
+        }
+      };
+
+      addRange(2, 50);
+      addRange(100, 160);
+      addRange(51, 99);
+      addRange(161, 254);
+
+      // 4. Batch sweep candidate IPs in chunks of 25 with 350ms timeout
+      const CHUNK_SIZE = 25;
+      for (let i = 0; i < candidateList.length; i += CHUNK_SIZE) {
+        const chunk = candidateList.slice(i, i + CHUNK_SIZE);
+        const results = await Promise.all(
+          chunk.map(async ip => {
+            const found = await probeIp(ip, 350);
+            return found ? ip : null;
+          }),
+        );
+
+        const foundIp = results.find(ip => ip !== null);
+        if (foundIp) {
+          console.log(`[ESP32 DISCOVERY] ESP32 found at ${foundIp}!`);
+          setEsp32Ip(foundIp);
+          connectToController(foundIp);
+          setIsSearching(false);
+          isSearchingRef.current = false;
+          return foundIp;
+        }
+      }
+
+      setStatusMessage('ESP32 not found. Check Wi-Fi');
+    } catch (err) {
+      console.warn('[ESP32 DISCOVERY] Sweep failed:', err);
+      setStatusMessage('Discovery failed');
+    } finally {
+      setIsSearching(false);
+      isSearchingRef.current = false;
+    }
+
+    return null;
+  }, [connectToController, setEsp32Ip]);
+
+  // Connect on mount, and attempt background auto-discovery after 2.5s if offline
   useEffect(() => {
     connectToController();
+
+    const discoveryTimer = setTimeout(() => {
+      if (!isConnectedRef.current) {
+        autoDiscover();
+      }
+    }, 2500);
+
     return () => {
+      clearTimeout(discoveryTimer);
       disconnect();
     };
-  }, [connectToController, disconnect]);
+  }, [connectToController, disconnect, autoDiscover]);
 
   return {
     esp32Ip,
     setEsp32Ip,
     isConnected,
     isConnecting,
+    isSearching,
     statusMessage,
     connect: connectToController,
     disconnect,
+    autoDiscover,
   };
 }

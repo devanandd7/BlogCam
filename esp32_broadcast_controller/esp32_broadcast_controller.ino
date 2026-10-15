@@ -21,6 +21,8 @@
 #include <DNSServer.h>
 #include <Preferences.h>
 #include <WebSocketsServer.h>
+#include <HTTPClient.h>
+
 
 // =================================================================================
 // 1. PIN CONFIGURATION
@@ -101,14 +103,19 @@ unsigned long ledFeedbackUntil[10] = {0};
 // Forward Declarations
 void startConfigPortal();
 void handlePortalRoot();
+void handleCaptiveRedirect();
 void handlePortalSave();
 void handlePortalScan();
 bool connectToSavedWifi();
+void startNormalWebServer();
+void announceToPhone();
 void handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length);
 void parseAppStateJson(const String& json);
 void sendActionToApp(const char* actionName);
 void updateLedStates();
 void runLedSelfTest();
+
+
 
 // =================================================================================
 // 3. SETUP
@@ -119,6 +126,10 @@ void setup() {
   Serial.println("\n\n========================================");
   Serial.println("  DexCam Studio - ESP32-S3 Controller   ");
   Serial.println("========================================");
+
+  // Disable Wi-Fi modem sleep for minimum packet latency and maximum throughput
+  WiFi.setSleep(false);
+
 
   // Initialize LEDs
   for (int i = 0; i < 10; i++) {
@@ -160,6 +171,9 @@ void setup() {
     webSocket.onEvent(handleWebSocketEvent);
     Serial.println("[WS] WebSocket Server started on port 81!");
     Serial.println("[WS] Ready for DexCam Studio connection (No PIN needed).");
+
+    // Start HTTP discovery server on port 80 & begin auto-announcing to Phone
+    startNormalWebServer();
   } else {
     // Failed to connect -> Start Webpage Portal
     Serial.println("[WIFI] Could not connect to saved Wi-Fi. Launching Setup Webpage...");
@@ -187,6 +201,8 @@ void loop() {
 
   // Normal Operating Mode
   webSocket.loop();
+  webServer.handleClient();
+  announceToPhone();
 
   // Handle Button Presses
   for (int i = 0; i < 10; i++) {
@@ -269,18 +285,21 @@ void loop() {
 }
 
 // =================================================================================
-// 5. WI-FI CONNECTION ATTEMPT
+// 5. WI-FI CONNECTION ATTEMPT (FAST & SNAPPY)
 // =================================================================================
 bool connectToSavedWifi() {
   Serial.print("[WIFI] Connecting to: ");
   Serial.println(savedSsid);
 
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
   WiFi.begin(savedSsid.c_str(), savedPass.c_str());
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 25) {
-    delay(400);
+  // 15 attempts x 250ms = 3.75 seconds max (much faster than 10s wait)
+  while (WiFi.status() != WL_CONNECTED && attempts < 16) {
+    delay(250);
     Serial.print(".");
     digitalWrite(PIN_LED_1, !digitalRead(PIN_LED_1));
     attempts++;
@@ -299,27 +318,40 @@ bool connectToSavedWifi() {
 }
 
 // =================================================================================
-// 6. CAPTIVE PORTAL & WEBPAGE SETUP
+// 6. CAPTIVE PORTAL & ULTRA-FAST WEBPAGE SETUP (<50ms response)
 // =================================================================================
+void handleCaptiveRedirect() {
+  // Instant HTTP 302 redirect for Android / iOS captive portal detection probes (<1ms)
+  webServer.sendHeader("Location", "http://192.168.4.1/", true);
+  webServer.send(302, "text/plain", "");
+}
+
 void startConfigPortal() {
   inConfigPortal = true;
   WiFi.disconnect();
-  delay(100);
+  delay(50);
 
-  // Start Access Point
+  // Disable Wi-Fi sleep for instant packet responsiveness
+  WiFi.setSleep(false);
+
+  // Start Access Point on Channel 1 (fast beacon)
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-  WiFi.softAP(AP_SSID);
+  WiFi.softAP(AP_SSID, NULL, 1);
+
+  // Trigger non-blocking background Wi-Fi scan immediately
+  // By the time the user connects and opens the browser, results are already ready in memory!
+  WiFi.scanNetworks(true);
 
   Serial.println("\n========================================");
-  Serial.println("[SETUP PORTAL] Hotspot started!");
+  Serial.println("[SETUP PORTAL] Fast Hotspot started!");
   Serial.print("[SETUP PORTAL] Connect to Wi-Fi: ");
   Serial.println(AP_SSID);
-  Serial.print("[SETUP PORTAL] Open browser at: http://");
-  Serial.println(WiFi.softAPIP());
+  Serial.println("[SETUP PORTAL] Open browser at: http://192.168.4.1");
   Serial.println("========================================\n");
 
   // Captive Portal DNS redirection
+  dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
   dnsServer.start(DNS_PORT, "*", apIP);
 
   // Web Server Routes
@@ -327,71 +359,128 @@ void startConfigPortal() {
   webServer.on("/save", HTTP_POST, handlePortalSave);
   webServer.on("/scan", HTTP_GET, handlePortalScan);
 
-  // Captive portal detection endpoints (Android / iOS auto-popup)
-  webServer.on("/generate_204", HTTP_GET, handlePortalRoot);
-  webServer.on("/gen_204", HTTP_GET, handlePortalRoot);
-  webServer.on("/hotspot-detect.html", HTTP_GET, handlePortalRoot);
-  webServer.on("/ncsi.txt", HTTP_GET, handlePortalRoot);
-  webServer.on("/connecttest.txt", HTTP_GET, handlePortalRoot);
+  // Instant Captive Portal Detection Endpoints (Android / iOS / Windows auto-popup in 1ms)
+  webServer.on("/generate_204", HTTP_GET, handleCaptiveRedirect);
+  webServer.on("/gen_204", HTTP_GET, handleCaptiveRedirect);
+  webServer.on("/hotspot-detect.html", HTTP_GET, handleCaptiveRedirect);
+  webServer.on("/canonical.html", HTTP_GET, handleCaptiveRedirect);
+  webServer.on("/ncsi.txt", HTTP_GET, handleCaptiveRedirect);
+  webServer.on("/connecttest.txt", HTTP_GET, handleCaptiveRedirect);
 
-  webServer.onNotFound(handlePortalRoot);
+  webServer.onNotFound([]() {
+    String host = webServer.hostHeader();
+    if (host.length() > 0 && host != "192.168.4.1" && host != "192.168.4.1:80") {
+      handleCaptiveRedirect();
+    } else {
+      handlePortalRoot();
+    }
+  });
+
   webServer.begin();
 }
 
 void handlePortalRoot() {
-  // Scan Wi-Fi Networks
-  int n = WiFi.scanNetworks();
-  String options = "";
-  for (int i = 0; i < n; ++i) {
-    String ssid = WiFi.SSID(i);
-    int rssi = WiFi.RSSI(i);
-    if (ssid.length() > 0) {
-      options += "<option value='" + ssid + "'>" + ssid + " (" + String(rssi) + " dBm)</option>";
-    }
+  // If request is from an external captive hostname probe, redirect to 192.168.4.1
+  String host = webServer.hostHeader();
+  if (host.length() > 0 && host != "192.168.4.1" && host != "192.168.4.1:80") {
+    handleCaptiveRedirect();
+    return;
   }
 
-  String html = R"rawliteral(
+  // Ensure non-blocking scan is triggered in background
+  if (WiFi.scanComplete() == -2) {
+    WiFi.scanNetworks(true);
+  }
+
+  // Instant HTML response served immediately (0ms blocking!)
+  static const char PROGMEM html[] = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DexCam Studio - Wi-Fi Setup</title>
   <style>
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: #0c0f15; color: #fff; margin: 0; padding: 24px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-    .card { background: #161b24; border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 26px; width: 100%; max-width: 380px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); }
-    h2 { color: #f1bd76; margin: 0 0 6px; font-size: 19px; font-weight: 800; letter-spacing: 1px; }
+    body { background: #0c0f15; color: #fff; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .card { background: #161b24; border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; padding: 26px; width: 100%; max-width: 380px; box-shadow: 0 12px 32px rgba(0,0,0,0.6); }
+    .badge { display: inline-block; background: rgba(241,189,118,0.15); color: #f1bd76; font-size: 10px; font-weight: 800; padding: 4px 10px; border-radius: 20px; letter-spacing: 1px; margin-bottom: 12px; }
+    h2 { color: #f1bd76; margin: 0 0 6px; font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
     p { color: #9da6b4; font-size: 13px; margin: 0 0 20px; line-height: 18px; }
-    label { display: block; font-size: 11px; font-weight: 700; color: #c4ccd8; letter-spacing: 0.8px; margin-bottom: 6px; }
-    select, input { width: 100%; background: #080a0f; border: 1px solid #313a48; border-radius: 10px; color: #fff; font-size: 14px; padding: 12px; margin-bottom: 16px; outline: none; }
+    .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    label { font-size: 11px; font-weight: 700; color: #c4ccd8; letter-spacing: 0.8px; }
+    .rescan-btn { background: none; border: none; color: #f1bd76; font-size: 11px; font-weight: 700; cursor: pointer; padding: 0; text-decoration: underline; }
+    select, input { width: 100%; background: #080a0f; border: 1px solid #313a48; border-radius: 10px; color: #fff; font-size: 14px; padding: 12px; margin-bottom: 16px; outline: none; transition: border-color 0.2s; }
     select:focus, input:focus { border-color: #f1bd76; }
-    button { width: 100%; background: #f1bd76; color: #12161e; border: none; border-radius: 10px; font-size: 13px; font-weight: 800; letter-spacing: 1px; padding: 14px; cursor: pointer; transition: 0.2s; }
-    button:active { transform: scale(0.98); }
+    .status-text { font-size: 11px; color: #747d8c; margin-top: -10px; margin-bottom: 14px; display: block; }
+    button[type="submit"] { width: 100%; background: #f1bd76; color: #12161e; border: none; border-radius: 10px; font-size: 13px; font-weight: 800; letter-spacing: 1px; padding: 14px; cursor: pointer; transition: 0.2s; }
+    button[type="submit"]:active { transform: scale(0.98); }
     .footer { text-align: center; color: #576171; font-size: 10px; margin-top: 18px; font-weight: 700; letter-spacing: 1.5px; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>DEXCAM STUDIO</h2>
-    <p>Select your Wi-Fi router or Mobile Hotspot to connect your ESP32-S3 broadcast controller.</p>
+    <div class="badge">ESP32-S3 CONTROLLER</div>
+    <h2>DexCam Wi-Fi Setup</h2>
+    <p>Select your Wi-Fi router or Mobile Hotspot to connect your broadcast controller.</p>
     <form action="/save" method="POST">
-      <label>AVAILABLE WI-FI NETWORKS</label>
-      <select id="sel" onchange="document.getElementById('manual').value=this.value">
-        <option value="">-- Choose Wi-Fi --</option>
-)rawliteral";
-
-  html += options;
-
-  html += R"rawliteral(
+      <div class="row">
+        <label>DETECTED WI-FI NETWORKS</label>
+        <button type="button" class="rescan-btn" onclick="fetchScan(true)">&#x21bb; Rescan</button>
+      </div>
+      <select id="sel" onchange="onSelectChange(this.value)">
+        <option value="">&#x23f3; Scanning nearby Wi-Fi...</option>
       </select>
+      <span id="status" class="status-text">Scanning channels in background...</span>
+
       <label>WI-FI NAME (SSID)</label>
-      <input type="text" id="manual" name="ssid" placeholder="Enter Wi-Fi name" required>
+      <input type="text" id="manual" name="ssid" placeholder="Enter Wi-Fi name" required autocomplete="off">
       <label>WI-FI PASSWORD</label>
-      <input type="password" name="pass" placeholder="Enter password">
-      <button type="submit">SAVE & CONNECT</button>
+      <input type="password" name="pass" placeholder="Enter password (leave blank if open)" autocomplete="off">
+      <button type="submit">SAVE &amp; CONNECT</button>
     </form>
-    <div class="footer">ESP32-S3 BROADCAST CONTROLLER</div>
+    <div class="footer">DEXCAM STUDIO IOT HARDWARE</div>
   </div>
+
+  <script>
+    function onSelectChange(val) {
+      if (val) document.getElementById('manual').value = val;
+    }
+
+    function fetchScan(isRescan) {
+      const status = document.getElementById('status');
+      const sel = document.getElementById('sel');
+      if (isRescan) {
+        status.innerText = 'Scanning nearby channels...';
+        sel.innerHTML = '<option value="">&#x23f3; Rescanning...</option>';
+      }
+      fetch('/scan' + (isRescan ? '?refresh=1' : ''))
+        .then(r => r.json())
+        .then(nets => {
+          if (!nets || nets.length === 0) {
+            status.innerText = 'No networks found. Enter Wi-Fi manually below.';
+            sel.innerHTML = '<option value="">-- No Wi-Fi found --</option>';
+            return;
+          }
+          sel.innerHTML = '<option value="">-- Choose Wi-Fi (' + nets.length + ' found) --</option>';
+          nets.forEach(n => {
+            if (n.ssid) {
+              const opt = document.createElement('option');
+              opt.value = n.ssid;
+              opt.textContent = n.ssid + ' (' + n.rssi + ' dBm)';
+              sel.appendChild(opt);
+            }
+          });
+          status.innerText = nets.length + ' networks detected nearby';
+        })
+        .catch(() => {
+          status.innerText = 'Enter Wi-Fi name manually below';
+        });
+    }
+
+    // Auto-fetch scan immediately after instant page load
+    window.addEventListener('DOMContentLoaded', () => { fetchScan(false); });
+  </script>
 </body>
 </html>
 )rawliteral";
@@ -416,7 +505,7 @@ void handlePortalSave() {
   <title>Connecting...</title>
   <style>
     body { background: #0c0f15; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; text-align: center; }
-    .card { background: #161b24; border: 1px solid rgba(46,213,115,0.4); border-radius: 18px; padding: 28px; max-width: 360px; }
+    .card { background: #161b24; border: 1px solid rgba(46,213,115,0.4); border-radius: 18px; padding: 28px; max-width: 360px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); }
     h2 { color: #2ed573; margin-top: 0; }
     p { color: #a4b0be; font-size: 14px; line-height: 20px; }
   </style>
@@ -433,7 +522,7 @@ void handlePortalSave() {
 )rawliteral";
 
     webServer.send(200, "text/html", successHtml);
-    delay(1000);
+    delay(800);
 
     // Stop Portal and Restart in Normal Mode
     ESP.restart();
@@ -443,19 +532,88 @@ void handlePortalSave() {
 }
 
 void handlePortalScan() {
-  int n = WiFi.scanNetworks();
+  bool forceRefresh = webServer.hasArg("refresh");
+  int n = WiFi.scanComplete();
+
+  if (forceRefresh || n == -2) {
+    // Start or restart scan
+    WiFi.scanDelete();
+    WiFi.scanNetworks(true); // non-blocking async scan
+  }
+
+  // If scan is still running, wait a brief moment (max 800ms)
+  int waited = 0;
+  while (WiFi.scanComplete() == -1 && waited < 8) {
+    delay(100);
+    waited++;
+  }
+
+  n = WiFi.scanComplete();
+  if (n < 0) {
+    n = 0; // return empty if still working
+  }
+
   String json = "[";
   for (int i = 0; i < n; ++i) {
-    if (i > 0) json += ",";
-    json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+    String s = WiFi.SSID(i);
+    if (s.length() > 0) {
+      if (json.length() > 1) json += ",";
+      json += "{\"ssid\":\"" + s + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+    }
   }
   json += "]";
+
   webServer.send(200, "application/json", json);
+}
+
+// =================================================================================
+// 6B. NORMAL MODE HTTP DISCOVERY & AUTO-PAIRING
+// =================================================================================
+unsigned long lastAnnounceTime = 0;
+
+void startNormalWebServer() {
+  webServer.on("/esp32-status", HTTP_GET, []() {
+    String json = "{\"device\":\"DexCam-ESP32\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"wsPort\":81,\"status\":\"ready\",\"appConnected\":" + (appConnected ? "true" : "false") + "}";
+    webServer.send(200, "application/json", json);
+  });
+
+  webServer.on("/", HTTP_GET, []() {
+    String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>DexCam Controller</title><style>body{background:#0c0f15;color:#fff;font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;padding:20px;text-align:center;}.card{background:#161b24;border:1px solid #2ed573;border-radius:18px;padding:28px;max-width:360px;}h2{color:#2ed573;margin:0 0 10px;}p{color:#a4b0be;font-size:14px;line-height:22px;}</style></head><body><div class='card'><h2>DexCam Controller Online</h2><p>IP: <b>" + WiFi.localIP().toString() + "</b><br>WebSocket: <b>Port 81</b><br>Status: <b>" + (appConnected ? "<span style='color:#2ed573'>Connected to App</span>" : "<span style='color:#f1bd76'>Waiting for App...</span>") + "</b></p></div></body></html>";
+    webServer.send(200, "text/html", html);
+  });
+
+  webServer.begin();
+  Serial.println("[HTTP] Discovery Server active on port 80 (http://" + WiFi.localIP().toString() + "/esp32-status)");
+}
+
+void announceToPhone() {
+  if (appConnected || WiFi.status() != WL_CONNECTED || inConfigPortal) return;
+
+  unsigned long now = millis();
+  if (now - lastAnnounceTime < 2500) return; // Announce every 2.5 seconds until connected
+  lastAnnounceTime = now;
+
+  IPAddress gateway = WiFi.gatewayIP();
+  if (gateway[0] == 0) return;
+
+  HTTPClient http;
+  String url = "http://" + gateway.toString() + ":8000/api";
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(350);
+
+  String payload = "{\"action\":\"esp32-announce\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"port\":81}";
+  int httpCode = http.POST(payload);
+  if (httpCode > 0) {
+    Serial.printf("[AUTO-PAIR] Announced to Phone (%s:8000) -> HTTP %d\n", gateway.toString().c_str(), httpCode);
+  }
+  http.end();
 }
 
 // =================================================================================
 // 7. WEBSOCKET EVENT HANDLER
 // =================================================================================
+
 void handleWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
