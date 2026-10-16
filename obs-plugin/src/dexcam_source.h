@@ -60,6 +60,7 @@ public:
     // State accessor (thread-safe)
     ConnectionState connection_state() const;
     std::string     get_shape() const;
+    bool            is_usb_mode() const;
 
 private:
     void apply_settings(obs_data* settings);
@@ -69,6 +70,7 @@ private:
     obs_source_t*                    m_source;
 
     // Current resolved settings
+    std::string                      m_conn_mode      = "wifi";
     std::string                      m_receiver_ip;
     uint16_t                         m_receiver_port  = 8000;
     std::string                      m_pairing_code;

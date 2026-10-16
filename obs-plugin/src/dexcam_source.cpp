@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <windows.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -100,26 +101,57 @@ static std::string trim_str(const std::string& s)
     return s.substr(start, end - start + 1);
 }
 
+static void setup_adb_usb_forward()
+{
+    STARTUPINFOA si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    char cmd[] = "cmd.exe /c adb forward tcp:8000 tcp:8000 && adb forward tcp:8002 tcp:8002";
+    if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, 1500);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        blog(LOG_INFO, "[DexCam] ADB USB port forward executed (8000, 8002)");
+    }
+}
+
+bool DexCamSource::is_usb_mode() const
+{
+    return m_conn_mode == CONN_MODE_USB;
+}
+
 void DexCamSource::apply_settings(obs_data* settings)
 {
+    const char* mode = obs_data_get_string(settings, PROP_CONN_MODE);
+    m_conn_mode = (mode && *mode) ? mode : CONN_MODE_WIFI;
+    bool is_usb = (m_conn_mode == CONN_MODE_USB);
+
     const char* ip   = obs_data_get_string(settings, PROP_RECEIVER_IP);
     int         port = static_cast<int>(obs_data_get_int(settings, PROP_RECEIVER_PORT));
     const char* code = obs_data_get_string(settings, PROP_PAIRING_CODE);
 
-    std::string raw_ip = trim_str((ip && *ip) ? ip : "");
-    if (raw_ip.rfind("http://", 0) == 0) raw_ip = raw_ip.substr(7);
-    if (raw_ip.rfind("https://", 0) == 0) raw_ip = raw_ip.substr(8);
-    auto colon_idx = raw_ip.find(':');
-    if (colon_idx != std::string::npos) {
-        int parsed_port = std::atoi(raw_ip.substr(colon_idx + 1).c_str());
-        if (is_valid_port(parsed_port)) {
-            port = parsed_port;
+    std::string raw_ip;
+    if (is_usb) {
+        setup_adb_usb_forward();
+        raw_ip = "127.0.0.1";
+        port = DEFAULT_RECEIVER_PORT;
+    } else {
+        raw_ip = trim_str((ip && *ip) ? ip : "");
+        if (raw_ip.rfind("http://", 0) == 0) raw_ip = raw_ip.substr(7);
+        if (raw_ip.rfind("https://", 0) == 0) raw_ip = raw_ip.substr(8);
+        auto colon_idx = raw_ip.find(':');
+        if (colon_idx != std::string::npos) {
+            int parsed_port = std::atoi(raw_ip.substr(colon_idx + 1).c_str());
+            if (is_valid_port(parsed_port)) {
+                port = parsed_port;
+            }
+            raw_ip = raw_ip.substr(0, colon_idx);
         }
-        raw_ip = raw_ip.substr(0, colon_idx);
-    }
-    auto slash_idx = raw_ip.find('/');
-    if (slash_idx != std::string::npos) {
-        raw_ip = raw_ip.substr(0, slash_idx);
+        auto slash_idx = raw_ip.find('/');
+        if (slash_idx != std::string::npos) {
+            raw_ip = raw_ip.substr(0, slash_idx);
+        }
     }
 
     m_receiver_ip   = trim_str(raw_ip);
@@ -696,15 +728,31 @@ static bool shape_changed_callback(obs_properties_t* props, obs_property_t* /*pr
     return true;
 }
 
+static bool conn_mode_changed_callback(obs_properties_t* props, obs_property_t* /*property*/, obs_data_t* settings)
+{
+    const char* mode = obs_data_get_string(settings, PROP_CONN_MODE);
+    bool is_usb = (mode && strcmp(mode, CONN_MODE_USB) == 0);
+
+    obs_property_t* p_ip   = obs_properties_get(props, PROP_RECEIVER_IP);
+    obs_property_t* p_port = obs_properties_get(props, PROP_RECEIVER_PORT);
+
+    if (p_ip)   obs_property_set_visible(p_ip, !is_usb);
+    if (p_port) obs_property_set_visible(p_port, !is_usb);
+
+    return true;
+}
+
 obs_properties_t* callbacks::get_properties(void* data)
 {
     obs_properties_t* props = obs_properties_create();
 
-    // Connection mode (Wi-Fi only for now)
+    // Connection mode (Wi-Fi or USB)
     obs_property_t* conn_mode = obs_properties_add_list(
         props, PROP_CONN_MODE, "Connection Mode",
         OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
-    obs_property_list_add_string(conn_mode, "Wi-Fi", CONN_MODE_WIFI);
+    obs_property_list_add_string(conn_mode, "Wi-Fi (Wireless Local Network)", CONN_MODE_WIFI);
+    obs_property_list_add_string(conn_mode, "USB Cable (Near-Zero Latency / ADB)", CONN_MODE_USB);
+    obs_property_set_modified_callback(conn_mode, conn_mode_changed_callback);
 
     // Phone IP
     obs_properties_add_text(props, PROP_RECEIVER_IP,
@@ -776,6 +824,10 @@ obs_properties_t* callbacks::get_properties(void* data)
     obs_property_set_visible(p_radius, is_squircle);
     obs_property_set_visible(p_pan_x, !is_original);
     obs_property_set_visible(p_pan_y, !is_original);
+
+    bool is_usb = data ? static_cast<DexCamSource*>(data)->is_usb_mode() : false;
+    obs_property_set_visible(obs_properties_get(props, PROP_RECEIVER_IP), !is_usb);
+    obs_property_set_visible(obs_properties_get(props, PROP_RECEIVER_PORT), !is_usb);
 
     // ── Camera Hardware Controls ─────────────────────────────────────────────
     obs_properties_add_button2(props, PROP_BTN_FLIP, "Flip Camera (Front / Rear)",

@@ -11,6 +11,7 @@ class BlogCamPackage : ReactPackage {
   ): List<NativeModule> = listOf(
     BlogCamTorchModule(reactContext),
     BlogCamAudioModule(reactContext),
+    BlogCamHardwareModule(reactContext),
   )
 
   override fun createViewManagers(

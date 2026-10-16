@@ -41,6 +41,7 @@
 
 // Connection mode values
 #define CONN_MODE_WIFI    "wifi"
+#define CONN_MODE_USB     "usb"
 
 // Default values
 #define DEFAULT_RECEIVER_PORT  8000  // phone HTTP signaling server port

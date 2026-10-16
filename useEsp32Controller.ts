@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { NativeModules } from 'react-native';
 import RNFS from 'react-native-fs';
 import { NetworkInfo } from 'react-native-network-info';
+import { DexCamLogger } from './DexCamLogger';
 
 export type ControllerState = {
   serverReady: boolean;
@@ -148,6 +149,8 @@ export function useEsp32Controller(
         setIsConnecting(false);
         setStatusMessage('Connected');
 
+        DexCamLogger.info('ESP32', 'esp32_connected', { wsUrl, ip });
+
         // Immediately push current app state
         sendStateUpdate(appStateRef.current);
       };
@@ -158,6 +161,7 @@ export function useEsp32Controller(
           console.log('[ESP32 WS] Received:', data);
 
           if (data?.type === 'action' && typeof data.action === 'string') {
+            DexCamLogger.info('ESP32', 'button_press_received', { action: data.action });
             const currentActions = actionsRef.current;
             switch (data.action) {
               case 'record-toggle':
@@ -190,6 +194,7 @@ export function useEsp32Controller(
 
       socket.onerror = error => {
         console.warn('[ESP32 WS] Error:', error);
+        DexCamLogger.error('ESP32', 'ws_error', { ip }, error);
       };
 
       socket.onclose = () => {
@@ -199,6 +204,8 @@ export function useEsp32Controller(
         setIsConnecting(false);
         setStatusMessage('Disconnected');
         wsRef.current = null;
+
+        DexCamLogger.warn('ESP32', 'ws_closed', { ip });
 
         // Auto-reconnect after 4 seconds if not already searching
         if (!isSearchingRef.current) {
@@ -377,6 +384,7 @@ export function useEsp32Controller(
         const foundIp = results.find(ip => ip !== null);
         if (foundIp) {
           console.log(`[ESP32 DISCOVERY] ESP32 found at ${foundIp}!`);
+          DexCamLogger.info('ESP32', 'auto_discover_success', { foundIp });
           setEsp32Ip(foundIp);
           connectToController(foundIp);
           setIsSearching(false);
@@ -385,6 +393,7 @@ export function useEsp32Controller(
         }
       }
 
+      DexCamLogger.warn('ESP32', 'auto_discover_not_found', { subnetPrefix });
       setStatusMessage('ESP32 not found. Check Wi-Fi');
     } catch (err) {
       console.warn('[ESP32 DISCOVERY] Sweep failed:', err);

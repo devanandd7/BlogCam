@@ -39,6 +39,9 @@ import {
 } from 'react-native-webrtc';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import remoteControlPage from './remote-control-page';
+import adminWebPage from './admin-web-page';
+import { DexCamLogger } from './DexCamLogger';
+import AdminConsoleModal from './AdminConsoleModal';
 
 const PORT = 8000;
 const MAX_PIN_ATTEMPTS = 5;
@@ -67,7 +70,7 @@ type ActionRequest = {
 const LIVE_PREVIEW_PROFILE: PreviewProfile = {
   width: 1280,
   height: 720,
-  frameRate: 24,
+  frameRate: 30,
 };
 const webRtcFrameProcessorPlugin = VisionCameraProxy.initFrameProcessorPlugin(
   'blogcamWebRtc',
@@ -302,6 +305,65 @@ export default function RemoteControlSession({
       : 'landscape',
   );
   const esp32ControllerRef = useRef<any>(null);
+  const [showAdminConsole, setShowAdminConsole] = useState(false);
+  const qualityLimitRef = useRef<string>('none');
+  const droppedFramesRef = useRef<number>(0);
+  const hardwareStatsRef = useRef<any>(null);
+  const lastThermalAlertRef = useRef<number>(0);
+
+  useEffect(() => {
+    DexCamLogger.init();
+    DexCamLogger.info('SYS', 'remote_session_started', { mode: sessionMode });
+    return () => {
+      DexCamLogger.info('SYS', 'remote_session_ended');
+    };
+  }, [sessionMode]);
+
+  useEffect(() => {
+    const statsTimer = setInterval(async () => {
+      try {
+        const hw = await DexCamLogger.getHardwareStats();
+        if (hw) {
+          hardwareStatsRef.current = hw;
+          const now = Date.now();
+          if (hw.batteryTempC >= 40.0 && now - lastThermalAlertRef.current > 60000) {
+            lastThermalAlertRef.current = now;
+            DexCamLogger.warn('SYS', 'device_overheating_warning', {
+              tempC: hw.batteryTempC,
+              thermalStatus: hw.thermalStatus,
+              batteryLevel: hw.batteryLevel,
+            });
+          }
+        }
+      } catch {}
+
+      if (peerRef.current && isBrowserConnectedRef.current) {
+        try {
+          const stats = await peerRef.current.getStats();
+          let qualityLimit = 'none';
+          let framesSent = 0;
+          let currentFps = LIVE_PREVIEW_PROFILE.frameRate;
+
+          stats.forEach((report: any) => {
+            if (report.type === 'outbound-rtp' && report.kind === 'video') {
+              framesSent = report.framesSent || 0;
+              qualityLimit = report.qualityLimitationReason || 'none';
+              currentFps = report.framesPerSecond || currentFps;
+            }
+          });
+
+          qualityLimitRef.current = qualityLimit;
+          DexCamLogger.metric('OBS', 'webrtc_stream_stats', {
+            fps: Math.round(currentFps),
+            qualityLimit,
+            framesSent,
+          });
+        } catch {}
+      }
+    }, 5000);
+
+    return () => clearInterval(statsTimer);
+  }, []);
 
   useEffect(() => {
     const sub = Dimensions.addEventListener(
@@ -1151,8 +1213,11 @@ export default function RemoteControlSession({
         const parameters = sender.getParameters();
         if (parameters?.encodings && parameters.encodings.length > 0) {
           parameters.encodings.forEach(encoding => {
-            encoding.maxBitrate = 1_800_000;
+            encoding.maxBitrate = 2_200_000;
             encoding.maxFramerate = LIVE_PREVIEW_PROFILE.frameRate;
+            try {
+              (encoding as any).degradationPreference = 'maintain-framerate';
+            } catch (_) {}
           });
           await sender.setParameters(parameters);
         }
@@ -1287,6 +1352,29 @@ export default function RemoteControlSession({
       bridge = new BridgeServer('blogcam_remote_controls', true);
       bridge.get('/', async (_request, response) => {
         response.html(remoteControlPage);
+      });
+      bridge.get('/admin', async (_request, response) => {
+        response.html(adminWebPage);
+      });
+      bridge.get('/api/admin-telemetry', async (_request, response) => {
+        response.json({
+          context: DexCamLogger.getContext(),
+          hardware: hardwareStatsRef.current,
+          status: {
+            obsConnected: isBrowserConnectedRef.current,
+            espConnected: esp32ControllerRef.current?.isConnected ?? false,
+            recordingState: recordingStateRef.current,
+            cameraFacing: cameraFacing,
+            fps: LIVE_PREVIEW_PROFILE.frameRate,
+            droppedFrames: droppedFramesRef.current,
+            qualityLimit: qualityLimitRef.current,
+          },
+          logs: DexCamLogger.getRingBuffer(),
+        });
+      });
+      bridge.post('/api/admin-clear-logs', async (_request, response) => {
+        await DexCamLogger.clearAllLogs();
+        response.json({ ok: true });
       });
       bridge.get('/favicon.ico', async (_request, response) => {
         response.send(204, 'image/x-icon', '');
@@ -1538,6 +1626,13 @@ export default function RemoteControlSession({
               {isBrowserConnected ? 'REMOTE · CONNECTED' : 'REMOTE'}
             </Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShowAdminConsole(true)}
+            style={styles.adminHeaderBadge}
+          >
+            <Text style={styles.adminHeaderText}>🛠️ LOGS</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -1801,6 +1896,14 @@ export default function RemoteControlSession({
           </Text>
         </View>
       ) : null}
+
+      <AdminConsoleModal
+        visible={showAdminConsole}
+        onClose={() => setShowAdminConsole(false)}
+        serverUrl={serverUrl}
+        isEsp32Connected={esp32Controller.isConnected}
+        isObsConnected={isBrowserConnected}
+      />
     </View>
   );
 }
@@ -2131,6 +2234,22 @@ const styles = StyleSheet.create({
   },
   espHeaderText: {
     color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  adminHeaderBadge: {
+    borderRadius: 20,
+    backgroundColor: 'rgba(241, 189, 118, 0.15)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(241, 189, 118, 0.4)',
+  },
+  adminHeaderText: {
+    color: '#f1bd76',
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 1.2,

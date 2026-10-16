@@ -29,6 +29,7 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 import RemoteControlSession from './RemoteControlSession';
+import { DexCamLogger } from './DexCamLogger';
 
 type CaptureMode = 'photo' | 'video';
 type FlashMode = 'off' | 'auto' | 'on';
@@ -115,6 +116,11 @@ function CameraScreen() {
       facing === 'back' &&
       (mode === 'photo' ? device.hasFlash : device.hasTorch),
   );
+
+  useEffect(() => {
+    DexCamLogger.init();
+    DexCamLogger.info('SYS', 'app_started');
+  }, []);
 
   useEffect(() => {
     if (!hasPermission) {

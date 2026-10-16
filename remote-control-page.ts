@@ -3,6 +3,9 @@ const remoteControlPage = String.raw`<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="theme-color" content="#090b0f">
   <title>DexCam Studio Remote</title>
   <style>
@@ -225,9 +228,30 @@ const remoteControlPage = String.raw`<!doctype html>
     peer = new RTCPeerConnection({iceServers: []});
     const connection = peer;
     const preview = byId("preview");
-    peer.addTransceiver("video", {direction: "recvonly"});
+    const transceiver = peer.addTransceiver("video", {direction: "recvonly"});
+    if (transceiver && transceiver.receiver) {
+      try {
+        transceiver.receiver.playoutDelayHint = 0;
+        transceiver.receiver.jitterBufferDelayHint = 0;
+      } catch (_) {}
+    }
     peer.ontrack = event => {
       if (peer !== connection || event.track.kind !== "video") return;
+      if (event.receiver) {
+        try {
+          if ("playoutDelayHint" in event.receiver) {
+            event.receiver.playoutDelayHint = 0;
+          }
+          if ("jitterBufferDelayHint" in event.receiver) {
+            event.receiver.jitterBufferDelayHint = 0;
+          }
+        } catch (_) {}
+      }
+      try {
+        if ("contentHint" in event.track) {
+          event.track.contentHint = "motion";
+        }
+      } catch (_) {}
       preview.srcObject = event.streams[0] || new MediaStream([event.track]);
       preview.play().catch(error => {
         tell("Video arrived, but the browser could not start playback: " + error.message);
