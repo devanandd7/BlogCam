@@ -86,7 +86,8 @@ WifiReceiver::~WifiReceiver()
 
 bool WifiReceiver::start(const ReceiverConfig& config,
                          StateChangeCb         state_cb,
-                         ErrorCb               error_cb)
+                         ErrorCb               error_cb,
+                         FrameCb               frame_cb)
 {
     if (m_worker.joinable()) {
         return false;
@@ -94,10 +95,11 @@ bool WifiReceiver::start(const ReceiverConfig& config,
 
     m_stop_flag.store(false, std::memory_order_release);
     m_state.store(ConnectionState::CONNECTING, std::memory_order_release);
+    m_frame_cb = frame_cb;
     if (state_cb) state_cb(ConnectionState::CONNECTING, "Starting frame bridge");
 
     m_worker = std::thread(&WifiReceiver::worker_main, this,
-                           config, std::move(state_cb), std::move(error_cb));
+                           config, std::move(state_cb), std::move(error_cb), std::move(frame_cb));
     return true;
 }
 
@@ -230,7 +232,8 @@ static bool decode_jpeg_wic(IWICImagingFactory* pFactory,
 // ── Worker Main Loop ──────────────────────────────────────────────────────────
 void WifiReceiver::worker_main(ReceiverConfig cfg,
                                StateChangeCb  state_cb,
-                               ErrorCb        error_cb)
+                               ErrorCb        error_cb,
+                               FrameCb        frame_cb)
 {
     m_phone_host = cfg.host;
     m_phone_port = cfg.port;
@@ -295,7 +298,7 @@ void WifiReceiver::worker_main(ReceiverConfig cfg,
 
     int flag = 1;
     setsockopt(stream_sock, IPPROTO_TCP, TCP_NODELAY, (char*)&flag, sizeof(flag));
-    int rcvbuf = 32 * 1024;
+    int rcvbuf = 256 * 1024; // 256 KB buffer for zero-latency burst delivery
     setsockopt(stream_sock, SOL_SOCKET, SO_RCVBUF, (char*)&rcvbuf, sizeof(rcvbuf));
 
     sockaddr_in stream_addr = {};
@@ -351,6 +354,14 @@ void WifiReceiver::worker_main(ReceiverConfig cfg,
             break;
         }
 
+        // ── ZERO-LATENCY TCP QUEUE PURGE ──
+        // If a newer frame is already waiting in the TCP receive buffer, skip decoding
+        // this older frame so we stay strictly at the bleeding-edge live camera stream!
+        u_long pending_bytes = 0;
+        if (ioctlsocket(stream_sock, FIONREAD, &pending_bytes) == 0 && pending_bytes >= 25000) {
+            continue;
+        }
+
         uint32_t out_w = 0, out_h = 0;
         if (decode_jpeg_wic(pWicFactory, jpeg_buf.data(), jpeg_len, rot, rgba_buf, out_w, out_h)) {
             DecodedFrame f;
@@ -359,7 +370,9 @@ void WifiReceiver::worker_main(ReceiverConfig cfg,
             f.timestamp_us = mono_us();
             f.data = std::move(rgba_buf);
 
-            if (m_queue) {
+            if (frame_cb) {
+                frame_cb(std::move(f));
+            } else if (m_queue) {
                 m_queue->push(std::move(f));
             }
             m_stat_received.fetch_add(1, std::memory_order_relaxed);

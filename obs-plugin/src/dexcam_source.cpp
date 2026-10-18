@@ -49,7 +49,10 @@ namespace dexcam {
 DexCamSource::DexCamSource(obs_source_t* source, obs_data* settings)
     : m_source(source)
 {
-    blog(LOG_INFO, "[DexCam] Source created");
+    blog(LOG_INFO, "[DexCam] Source created (unbuffered zero-latency mode)");
+
+    obs_source_set_async_unbuffered(source, true);
+    obs_source_set_async_decoupled(source, true);
 
     m_queue    = std::make_shared<FrameQueue>(1 /* strictly 1 frame: zero-latency live drop policy */);
     m_receiver = std::make_unique<WifiReceiver>(m_queue);
@@ -299,11 +302,16 @@ bool DexCamSource::start_receiver()
         [this](std::string msg) {
             if (m_destroyed.load(std::memory_order_acquire)) return;
             blog(LOG_WARNING, "[DexCam] Receiver error: %s", msg.c_str());
+        },
+        [this](DecodedFrame&& f) {
+            on_frame_decoded(std::move(f));
         });
 
     if (ok) {
+        obs_source_set_async_unbuffered(m_source, true);
+        obs_source_set_async_decoupled(m_source, true);
         m_conn_state.store(ConnectionState::CONNECTING, std::memory_order_release);
-        blog(LOG_INFO, "[DexCam] Receiver started for %s:%u",
+        blog(LOG_INFO, "[DexCam] Receiver started for %s:%u (unbuffered zero-latency mode)",
              cfg.host.c_str(), cfg.port);
     } else {
         blog(LOG_ERROR, "[DexCam] Failed to start receiver");
@@ -590,6 +598,40 @@ static bool process_frame_shape(
     }
 
     return false;
+}
+
+void DexCamSource::on_frame_decoded(DecodedFrame&& f)
+{
+    if (m_destroyed.load(std::memory_order_acquire) || !m_active.load(std::memory_order_acquire)) return;
+    if (f.width == 0 || f.height == 0 || f.data.empty()) return;
+
+    ShapeConfig shape_cfg;
+    {
+        std::lock_guard<std::mutex> lock(m_shape_mutex);
+        shape_cfg = m_shape_cfg;
+    }
+
+    uint32_t out_w = f.width;
+    uint32_t out_h = f.height;
+    const uint8_t* out_pixels = f.data.data();
+
+    bool processed = process_frame_shape(f, shape_cfg, m_processed_buf, out_w, out_h);
+    if (processed) {
+        out_pixels = m_processed_buf.data();
+    }
+
+    m_width  = out_w;
+    m_height = out_h;
+
+    struct obs_source_frame obs_frame = {};
+    obs_frame.format    = VIDEO_FORMAT_RGBA;
+    obs_frame.width     = out_w;
+    obs_frame.height    = out_h;
+    obs_frame.timestamp = os_gettime_ns(); // Current OBS clock: renders immediately on next display refresh without buffer queue
+    obs_frame.data[0]   = const_cast<uint8_t*>(out_pixels);
+    obs_frame.linesize[0] = out_w * 4u; // RGBA: 4 bytes/pixel
+
+    obs_source_output_video(m_source, &obs_frame);
 }
 
 void DexCamSource::pump_frames()

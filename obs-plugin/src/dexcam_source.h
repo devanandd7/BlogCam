@@ -43,7 +43,10 @@ public:
     void flip_camera();
     void toggle_flash();
 
-    // Called by video_tick to pump frames from queue → OBS
+    // Direct zero-latency frame callback from worker thread
+    void on_frame_decoded(DecodedFrame&& frame);
+
+    // Called by video_tick to pump frames from queue → OBS (legacy/fallback)
     void pump_frames();
 
     // Shape & Crop configuration struct

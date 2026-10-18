@@ -23,6 +23,7 @@ struct ReceiverConfig {
 
 using StateChangeCb = std::function<void(ConnectionState, std::string reason)>;
 using ErrorCb       = std::function<void(std::string msg)>;
+using FrameCb       = std::function<void(DecodedFrame&& frame)>;
 
 class WifiReceiver {
 public:
@@ -34,7 +35,8 @@ public:
 
     bool start(const ReceiverConfig& config,
                StateChangeCb state_cb,
-               ErrorCb       error_cb);
+               ErrorCb       error_cb,
+               FrameCb       frame_cb = nullptr);
 
     void stop();
 
@@ -54,9 +56,11 @@ public:
 private:
     void worker_main(ReceiverConfig cfg,
                      StateChangeCb  state_cb,
-                     ErrorCb        error_cb);
+                     ErrorCb        error_cb,
+                     FrameCb        frame_cb);
 
     std::shared_ptr<FrameQueue>  m_queue;
+    FrameCb                      m_frame_cb;
     std::thread                  m_worker;
     std::atomic<bool>            m_stop_flag{false};
     std::atomic<ConnectionState> m_state{ConnectionState::DISCONNECTED};
