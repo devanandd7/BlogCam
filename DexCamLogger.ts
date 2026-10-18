@@ -53,8 +53,8 @@ class DexCamLoggerService {
   private context: DeviceTelemetryContext = {
     installId: 'unknown',
     sessionId: '',
-    appVersion: '1.3',
-    buildNumber: '4',
+    appVersion: '1.4',
+    buildNumber: '5',
     deviceModel: 'Unknown',
     deviceBrand: 'Unknown',
     androidVersion: 'Unknown',
@@ -92,8 +92,8 @@ class DexCamLoggerService {
       this.context.deviceModel = DeviceInfo.getModel();
       this.context.deviceBrand = DeviceInfo.getBrand();
       this.context.androidVersion = Platform.OS === 'android' ? Platform.Version : 'Unknown';
-      this.context.appVersion = DeviceInfo.getVersion() || '1.3';
-      this.context.buildNumber = DeviceInfo.getBuildNumber() || '4';
+      this.context.appVersion = DeviceInfo.getVersion() || '1.4';
+      this.context.buildNumber = DeviceInfo.getBuildNumber() || '5';
       const totalMem = await DeviceInfo.getTotalMemory().catch(() => 0);
       this.context.totalMemoryMB = Math.round(totalMem / (1024 * 1024));
 

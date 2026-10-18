@@ -13,6 +13,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
@@ -30,6 +31,7 @@ import {
 } from 'react-native-safe-area-context';
 import RemoteControlSession from './RemoteControlSession';
 import { DexCamLogger } from './DexCamLogger';
+import AdminConsoleModal from './AdminConsoleModal';
 
 type CaptureMode = 'photo' | 'video';
 type FlashMode = 'off' | 'auto' | 'on';
@@ -101,6 +103,38 @@ function CameraScreen() {
   const [showAudioModal, setShowAudioModal] = useState(false);
   const [showDeepFilterWarning, setShowDeepFilterWarning] = useState(false);
   const [startupNotice, setStartupNotice] = useState<string | null>(null);
+  const [showAdminConsole, setShowAdminConsole] = useState(false);
+  const [isDevUnlocked, setIsDevUnlocked] = useState(false);
+  const tapCountRef = useRef(0);
+  const lastTapTimeRef = useRef(0);
+
+  const handleBrandTap = () => {
+    const now = Date.now();
+    if (now - lastTapTimeRef.current > 3000) {
+      tapCountRef.current = 1;
+    } else {
+      tapCountRef.current += 1;
+    }
+    lastTapTimeRef.current = now;
+
+    const count = tapCountRef.current;
+    if (count >= 4 && count < 7) {
+      const remaining = 7 - count;
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(
+          `You are ${remaining} step${remaining > 1 ? 's' : ''} away from Developer Logs`,
+          ToastAndroid.SHORT,
+        );
+      }
+    } else if (count >= 7) {
+      tapCountRef.current = 0;
+      setIsDevUnlocked(true);
+      setShowAdminConsole(true);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('🛠️ Developer Logs Unlocked', ToastAndroid.SHORT);
+      }
+    }
+  };
   const { hasPermission, requestPermission } = useCameraPermission();
   const {
     hasPermission: hasMicrophonePermission,
@@ -570,11 +604,26 @@ function CameraScreen() {
               </Pressable>
             ) : null}
             <View style={styles.topBar}>
-              <View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="DEXCAM STUDIO"
+                onPress={handleBrandTap}
+                hitSlop={12}
+              >
                 <Text style={styles.brand}>DEXCAM STUDIO</Text>
                 <Text style={styles.brandCaption}>BY PRIMADEX</Text>
-              </View>
+              </Pressable>
               <View style={styles.topActions}>
+                {isDevUnlocked ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Developer Logs"
+                    onPress={() => setShowAdminConsole(true)}
+                    style={styles.adminConsoleButton}
+                  >
+                    <Text style={styles.adminConsoleButtonText}>🛠️ LOGS</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Audio noise suppression mode: ${audioMode.toUpperCase()}`}
@@ -1185,6 +1234,11 @@ function CameraScreen() {
           </View>
         </View>
       </Modal>
+
+      <AdminConsoleModal
+        visible={showAdminConsole}
+        onClose={() => setShowAdminConsole(false)}
+      />
     </View>
   );
 }
@@ -1294,6 +1348,21 @@ const styles = StyleSheet.create({
     fontSize: 8,
     letterSpacing: 2,
     marginTop: 4,
+  },
+  adminConsoleButton: {
+    backgroundColor: 'rgba(31, 36, 48, 0.85)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#3e485e',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  adminConsoleButtonText: {
+    color: '#9ba1b0',
+    fontSize: 11,
+    fontWeight: '700',
   },
   roundButton: {
     width: 48,

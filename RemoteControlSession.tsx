@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { useEsp32Controller } from './useEsp32Controller';
@@ -306,6 +307,37 @@ export default function RemoteControlSession({
   );
   const esp32ControllerRef = useRef<any>(null);
   const [showAdminConsole, setShowAdminConsole] = useState(false);
+  const [isDevUnlocked, setIsDevUnlocked] = useState(false);
+  const tapCountRef = useRef(0);
+  const lastTapTimeRef = useRef(0);
+
+  const handleBrandTap = () => {
+    const now = Date.now();
+    if (now - lastTapTimeRef.current > 3000) {
+      tapCountRef.current = 1;
+    } else {
+      tapCountRef.current += 1;
+    }
+    lastTapTimeRef.current = now;
+
+    const count = tapCountRef.current;
+    if (count >= 4 && count < 7) {
+      const remaining = 7 - count;
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(
+          `You are ${remaining} step${remaining > 1 ? 's' : ''} away from Developer Logs`,
+          ToastAndroid.SHORT,
+        );
+      }
+    } else if (count >= 7) {
+      tapCountRef.current = 0;
+      setIsDevUnlocked(true);
+      setShowAdminConsole(true);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('🛠️ Developer Logs Unlocked', ToastAndroid.SHORT);
+      }
+    }
+  };
   const qualityLimitRef = useRef<string>('none');
   const droppedFramesRef = useRef<number>(0);
   const hardwareStatsRef = useRef<any>(null);
@@ -1595,10 +1627,15 @@ export default function RemoteControlSession({
       ) : null}
       <View pointerEvents="none" style={styles.scrim} />
       <View style={styles.header}>
-        <View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="DEXCAM STUDIO"
+          onPress={handleBrandTap}
+          hitSlop={12}
+        >
           <Text style={styles.brand}>DEXCAM STUDIO</Text>
           <Text style={styles.byline}>BY PRIMADEX</Text>
-        </View>
+        </Pressable>
         <View style={styles.headerBadges}>
           <View
             style={[
@@ -1626,13 +1663,15 @@ export default function RemoteControlSession({
               {isBrowserConnected ? 'REMOTE · CONNECTED' : 'REMOTE'}
             </Text>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setShowAdminConsole(true)}
-            style={styles.adminHeaderBadge}
-          >
-            <Text style={styles.adminHeaderText}>🛠️ LOGS</Text>
-          </Pressable>
+          {isDevUnlocked ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShowAdminConsole(true)}
+              style={styles.adminHeaderBadge}
+            >
+              <Text style={styles.adminHeaderText}>🛠️ LOGS</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
